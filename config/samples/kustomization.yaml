@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- cell_v1alpha1_cell.yaml
+- cell_v1alpha1_cellrouter.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

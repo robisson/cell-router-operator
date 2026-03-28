@@ -1,0 +1,738 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: cellrouters.cell.cellrouter.io
+spec:
+  group: cell.cellrouter.io
+  names:
+    kind: CellRouter
+    listKind: CellRouterList
+    plural: cellrouters
+    shortNames:
+    - cellrtr
+    singular: cellrouter
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CellRouter is the Schema for the cellrouters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of CellRouter
+            properties:
+              gateway:
+                description: Gateway defines the Gateway resource that exposes the
+                  cell entrypoints.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations are merged into the Gateway annotations.
+                    type: object
+                  gatewayClassName:
+                    description: GatewayClassName references the GatewayClass to use.
+                    minLength: 1
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Labels are merged into the Gateway labels.
+                    type: object
+                  listeners:
+                    description: Listeners configures the listeners exposed by the
+                      Gateway.
+                    items:
+                      description: CellGatewayListener represents a single gateway
+                        listener.
+                      properties:
+                        hostname:
+                          description: Hostname restricts the listener to a specific
+                            hostname when provided.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                          type: string
+                        name:
+                          description: Name uniquely identifies the listener within
+                            the Gateway.
+                          minLength: 1
+                          type: string
+                        port:
+                          description: Port is the network port exposed by the listener.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        protocol:
+                          description: Protocol defines the protocol supported by
+                            the listener.
+                          maxLength: 255
+                          minLength: 1
+                          pattern: ^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?$|[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\/[A-Za-z0-9]+$
+                          type: string
+                        tls:
+                          description: TLS configures TLS settings for the listener
+                            when the protocol requires it.
+                          properties:
+                            backend:
+                              description: |-
+                                Backend describes TLS configuration for gateway when connecting
+                                to backends.
+
+                                Note that this contains only details for the Gateway as a TLS client,
+                                and does _not_ imply behavior about how to choose which backend should
+                                get a TLS connection. That is determined by the presence of a BackendTLSPolicy.
+
+                                Support: Core
+
+                                <gateway:experimental>
+                              properties:
+                                clientCertificateRef:
+                                  description: |-
+                                    ClientCertificateRef is a reference to an object that contains a Client
+                                    Certificate and the associated private key.
+
+                                    References to a resource in different namespace are invalid UNLESS there
+                                    is a ReferenceGrant in the target namespace that allows the certificate
+                                    to be attached. If a ReferenceGrant does not allow this reference, the
+                                    "ResolvedRefs" condition MUST be set to False for this listener with the
+                                    "RefNotPermitted" reason.
+
+                                    ClientCertificateRef can reference to standard Kubernetes resources, i.e.
+                                    Secret, or implementation-specific custom resources.
+
+                                    Support: Core
+
+                                    <gateway:experimental>
+                                  properties:
+                                    group:
+                                      default: ""
+                                      description: |-
+                                        Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                        When unspecified or empty string, core API group is inferred.
+                                      maxLength: 253
+                                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                      type: string
+                                    kind:
+                                      default: Secret
+                                      description: Kind is kind of the referent. For
+                                        example "Secret".
+                                      maxLength: 63
+                                      minLength: 1
+                                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                      type: string
+                                    name:
+                                      description: Name is the name of the referent.
+                                      maxLength: 253
+                                      minLength: 1
+                                      type: string
+                                    namespace:
+                                      description: |-
+                                        Namespace is the namespace of the referenced object. When unspecified, the local
+                                        namespace is inferred.
+
+                                        Note that when a namespace different than the local namespace is specified,
+                                        a ReferenceGrant object is required in the referent namespace to allow that
+                                        namespace's owner to accept the reference. See the ReferenceGrant
+                                        documentation for details.
+
+                                        Support: Core
+                                      maxLength: 63
+                                      minLength: 1
+                                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
+                              type: object
+                            frontend:
+                              description: |-
+                                Frontend describes TLS config when client connects to Gateway.
+                                Support: Core
+
+                                <gateway:experimental>
+                              properties:
+                                default:
+                                  description: |-
+                                    Default specifies the default client certificate validation configuration
+                                    for all Listeners handling HTTPS traffic, unless a per-port configuration
+                                    is defined.
+
+                                    support: Core
+
+                                    <gateway:experimental>
+                                  properties:
+                                    validation:
+                                      description: |-
+                                        Validation holds configuration information for validating the frontend (client).
+                                        Setting this field will result in mutual authentication when connecting to the gateway.
+                                        In browsers this may result in a dialog appearing
+                                        that requests a user to specify the client certificate.
+                                        The maximum depth of a certificate chain accepted in verification is Implementation specific.
+
+                                        Support: Core
+
+                                        <gateway:experimental>
+                                      properties:
+                                        caCertificateRefs:
+                                          description: |-
+                                            CACertificateRefs contains one or more references to
+                                            Kubernetes objects that contain TLS certificates of
+                                            the Certificate Authorities that can be used
+                                            as a trust anchor to validate the certificates presented by the client.
+
+                                            A single CA certificate reference to a Kubernetes ConfigMap
+                                            has "Core" support.
+                                            Implementations MAY choose to support attaching multiple CA certificates to
+                                            a Listener, but this behavior is implementation-specific.
+
+                                            Support: Core - A single reference to a Kubernetes ConfigMap
+                                            with the CA certificate in a key named `ca.crt`.
+
+                                            Support: Implementation-specific (More than one certificate in a ConfigMap
+                                            with different keys or more than one reference, or other kinds of resources).
+
+                                            References to a resource in a different namespace are invalid UNLESS there
+                                            is a ReferenceGrant in the target namespace that allows the certificate
+                                            to be attached. If a ReferenceGrant does not allow this reference, the
+                                            "ResolvedRefs" condition MUST be set to False for this listener with the
+                                            "RefNotPermitted" reason.
+                                          items:
+                                            description: |-
+                                              ObjectReference identifies an API object including its namespace.
+
+                                              The API object must be valid in the cluster; the Group and Kind must
+                                              be registered in the cluster for this reference to be valid.
+
+                                              References to objects with invalid Group and Kind are not valid, and must
+                                              be rejected by the implementation, with appropriate Conditions set
+                                              on the containing object.
+                                            properties:
+                                              group:
+                                                description: |-
+                                                  Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                                  When set to the empty string, core API group is inferred.
+                                                maxLength: 253
+                                                pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                                type: string
+                                              kind:
+                                                description: Kind is kind of the referent.
+                                                  For example "ConfigMap" or "Service".
+                                                maxLength: 63
+                                                minLength: 1
+                                                pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                                type: string
+                                              name:
+                                                description: Name is the name of the
+                                                  referent.
+                                                maxLength: 253
+                                                minLength: 1
+                                                type: string
+                                              namespace:
+                                                description: |-
+                                                  Namespace is the namespace of the referenced object. When unspecified, the local
+                                                  namespace is inferred.
+
+                                                  Note that when a namespace different than the local namespace is specified,
+                                                  a ReferenceGrant object is required in the referent namespace to allow that
+                                                  namespace's owner to accept the reference. See the ReferenceGrant
+                                                  documentation for details.
+
+                                                  Support: Core
+                                                maxLength: 63
+                                                minLength: 1
+                                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                                type: string
+                                            required:
+                                            - group
+                                            - kind
+                                            - name
+                                            type: object
+                                          maxItems: 8
+                                          minItems: 1
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        mode:
+                                          default: AllowValidOnly
+                                          description: |-
+                                            FrontendValidationMode defines the mode for validating the client certificate.
+                                            There are two possible modes:
+
+                                            - AllowValidOnly: In this mode, the gateway will accept connections only if
+                                              the client presents a valid certificate. This certificate must successfully
+                                              pass validation against the CA certificates specified in `CACertificateRefs`.
+                                            - AllowInsecureFallback: In this mode, the gateway will accept connections
+                                              even if the client certificate is not presented or fails verification.
+
+                                              This approach delegates client authorization to the backend and introduce
+                                              a significant security risk. It should be used in testing environments or
+                                              on a temporary basis in non-testing environments.
+
+                                            Defaults to AllowValidOnly.
+
+                                            Support: Core
+                                          enum:
+                                          - AllowValidOnly
+                                          - AllowInsecureFallback
+                                          type: string
+                                      required:
+                                      - caCertificateRefs
+                                      type: object
+                                  type: object
+                                perPort:
+                                  description: |-
+                                    PerPort specifies tls configuration assigned per port.
+                                    Per port configuration is optional. Once set this configuration overrides
+                                    the default configuration for all Listeners handling HTTPS traffic
+                                    that match this port.
+                                    Each override port requires a unique TLS configuration.
+
+                                    support: Core
+
+                                    <gateway:experimental>
+                                  items:
+                                    properties:
+                                      port:
+                                        description: |-
+                                          The Port indicates the Port Number to which the TLS configuration will be
+                                          applied. This configuration will be applied to all Listeners handling HTTPS
+                                          traffic that match this port.
+
+                                          Support: Core
+
+                                          <gateway:experimental>
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      tls:
+                                        description: |-
+                                          TLS store the configuration that will be applied to all Listeners handling
+                                          HTTPS traffic and matching given port.
+
+                                          Support: Core
+
+                                          <gateway:experimental>
+                                        properties:
+                                          validation:
+                                            description: |-
+                                              Validation holds configuration information for validating the frontend (client).
+                                              Setting this field will result in mutual authentication when connecting to the gateway.
+                                              In browsers this may result in a dialog appearing
+                                              that requests a user to specify the client certificate.
+                                              The maximum depth of a certificate chain accepted in verification is Implementation specific.
+
+                                              Support: Core
+
+                                              <gateway:experimental>
+                                            properties:
+                                              caCertificateRefs:
+                                                description: |-
+                                                  CACertificateRefs contains one or more references to
+                                                  Kubernetes objects that contain TLS certificates of
+                                                  the Certificate Authorities that can be used
+                                                  as a trust anchor to validate the certificates presented by the client.
+
+                                                  A single CA certificate reference to a Kubernetes ConfigMap
+                                                  has "Core" support.
+                                                  Implementations MAY choose to support attaching multiple CA certificates to
+                                                  a Listener, but this behavior is implementation-specific.
+
+                                                  Support: Core - A single reference to a Kubernetes ConfigMap
+                                                  with the CA certificate in a key named `ca.crt`.
+
+                                                  Support: Implementation-specific (More than one certificate in a ConfigMap
+                                                  with different keys or more than one reference, or other kinds of resources).
+
+                                                  References to a resource in a different namespace are invalid UNLESS there
+                                                  is a ReferenceGrant in the target namespace that allows the certificate
+                                                  to be attached. If a ReferenceGrant does not allow this reference, the
+                                                  "ResolvedRefs" condition MUST be set to False for this listener with the
+                                                  "RefNotPermitted" reason.
+                                                items:
+                                                  description: |-
+                                                    ObjectReference identifies an API object including its namespace.
+
+                                                    The API object must be valid in the cluster; the Group and Kind must
+                                                    be registered in the cluster for this reference to be valid.
+
+                                                    References to objects with invalid Group and Kind are not valid, and must
+                                                    be rejected by the implementation, with appropriate Conditions set
+                                                    on the containing object.
+                                                  properties:
+                                                    group:
+                                                      description: |-
+                                                        Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                                        When set to the empty string, core API group is inferred.
+                                                      maxLength: 253
+                                                      pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                                      type: string
+                                                    kind:
+                                                      description: Kind is kind of
+                                                        the referent. For example
+                                                        "ConfigMap" or "Service".
+                                                      maxLength: 63
+                                                      minLength: 1
+                                                      pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                                      type: string
+                                                    name:
+                                                      description: Name is the name
+                                                        of the referent.
+                                                      maxLength: 253
+                                                      minLength: 1
+                                                      type: string
+                                                    namespace:
+                                                      description: |-
+                                                        Namespace is the namespace of the referenced object. When unspecified, the local
+                                                        namespace is inferred.
+
+                                                        Note that when a namespace different than the local namespace is specified,
+                                                        a ReferenceGrant object is required in the referent namespace to allow that
+                                                        namespace's owner to accept the reference. See the ReferenceGrant
+                                                        documentation for details.
+
+                                                        Support: Core
+                                                      maxLength: 63
+                                                      minLength: 1
+                                                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                                      type: string
+                                                  required:
+                                                  - group
+                                                  - kind
+                                                  - name
+                                                  type: object
+                                                maxItems: 8
+                                                minItems: 1
+                                                type: array
+                                                x-kubernetes-list-type: atomic
+                                              mode:
+                                                default: AllowValidOnly
+                                                description: |-
+                                                  FrontendValidationMode defines the mode for validating the client certificate.
+                                                  There are two possible modes:
+
+                                                  - AllowValidOnly: In this mode, the gateway will accept connections only if
+                                                    the client presents a valid certificate. This certificate must successfully
+                                                    pass validation against the CA certificates specified in `CACertificateRefs`.
+                                                  - AllowInsecureFallback: In this mode, the gateway will accept connections
+                                                    even if the client certificate is not presented or fails verification.
+
+                                                    This approach delegates client authorization to the backend and introduce
+                                                    a significant security risk. It should be used in testing environments or
+                                                    on a temporary basis in non-testing environments.
+
+                                                  Defaults to AllowValidOnly.
+
+                                                  Support: Core
+                                                enum:
+                                                - AllowValidOnly
+                                                - AllowInsecureFallback
+                                                type: string
+                                            required:
+                                            - caCertificateRefs
+                                            type: object
+                                        type: object
+                                    required:
+                                    - port
+                                    - tls
+                                    type: object
+                                  maxItems: 64
+                                  type: array
+                                  x-kubernetes-list-map-keys:
+                                  - port
+                                  x-kubernetes-list-type: map
+                                  x-kubernetes-validations:
+                                  - message: Port for TLS configuration must be unique
+                                      within the Gateway
+                                    rule: self.all(t1, self.exists_one(t2, t1.port
+                                      == t2.port))
+                              required:
+                              - default
+                              type: object
+                          type: object
+                      required:
+                      - name
+                      - port
+                      - protocol
+                      type: object
+                    minItems: 1
+                    type: array
+                  name:
+                    description: Name is the name of the managed Gateway.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: Namespace is the namespace where the Gateway is created.
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - gatewayClassName
+                - listeners
+                - name
+                - namespace
+                type: object
+              routes:
+                description: Routes describes how traffic should be routed to cell
+                  entrypoints.
+                items:
+                  description: CellRouteSpec describes an HTTPRoute managed by the
+                    operator.
+                  properties:
+                    cellRef:
+                      description: CellRef points to the target Cell that receives
+                        the traffic.
+                      minLength: 1
+                      type: string
+                    headerMatches:
+                      description: HeaderMatches constrains traffic using HTTP header
+                        matching.
+                      items:
+                        description: HTTPHeaderMatch represents a single HTTP header
+                          match rule.
+                        properties:
+                          name:
+                            description: Name is the HTTP header name to match.
+                            maxLength: 256
+                            minLength: 1
+                            pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
+                            type: string
+                          type:
+                            description: Type selects the header match strategy. Defaults
+                              to HeaderMatchExact.
+                            enum:
+                            - Exact
+                            - RegularExpression
+                            type: string
+                          value:
+                            description: Value is the HTTP header value to match.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - value
+                        type: object
+                      type: array
+                    hostnames:
+                      description: Hostnames declares the hostnames handled by this
+                        route.
+                      items:
+                        description: |-
+                          Hostname is the fully qualified domain name of a network host. This matches
+                          the RFC 1123 definition of a hostname with 2 notable exceptions:
+
+                           1. IPs are not allowed.
+                           2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
+                              label must appear by itself as the first label.
+
+                          Hostname can be "precise" which is a domain name without the terminating
+                          dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
+                          domain name prefixed with a single wildcard label (e.g. `*.example.com`).
+
+                          Note that as per RFC1035 and RFC1123, a *label* must consist of lower case
+                          alphanumeric characters or '-', and must start and end with an alphanumeric
+                          character. No other punctuation is allowed.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      type: array
+                    listenerNames:
+                      description: ListenerNames restricts the route to one or more
+                        listeners. When empty, all listeners apply.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Name is the name of the HTTPRoute resource generated
+                        for this rule.
+                      minLength: 1
+                      type: string
+                    pathMatch:
+                      description: PathMatch constrains traffic to a specific path
+                        expression.
+                      properties:
+                        type:
+                          description: Type is the path matching strategy. Defaults
+                            to PathMatchPathPrefix.
+                          enum:
+                          - Exact
+                          - PathPrefix
+                          - RegularExpression
+                          type: string
+                        value:
+                          description: Value is the path value.
+                          minLength: 1
+                          type: string
+                      required:
+                      - value
+                      type: object
+                    queryParamMatches:
+                      description: QueryParamMatches constrains traffic using HTTP
+                        query parameter matching.
+                      items:
+                        description: HTTPQueryParamMatch represents a single query
+                          parameter match rule.
+                        properties:
+                          name:
+                            description: Name is the query parameter name.
+                            maxLength: 256
+                            minLength: 1
+                            pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
+                            type: string
+                          type:
+                            description: Type selects the match strategy. Defaults
+                              to QueryParamMatchExact.
+                            enum:
+                            - Exact
+                            - RegularExpression
+                            type: string
+                          value:
+                            description: Value is the expected parameter value.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - value
+                        type: object
+                      type: array
+                    weight:
+                      description: Weight controls the relative traffic weight towards
+                        the cell.
+                      format: int32
+                      type: integer
+                  required:
+                  - cellRef
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - gateway
+            - routes
+            type: object
+          status:
+            description: status defines the observed state of CellRouter
+            properties:
+              conditions:
+                description: Conditions represent the current state of the CellRouter
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              managedGatewayRef:
+                description: ManagedGatewayRef stores the namespace/name of the managed
+                  gateway.
+                type: string
+              managedRoutes:
+                description: ManagedRoutes contains the managed route summary.
+                items:
+                  description: ManagedRouteStatus reports the status of a generated
+                    HTTPRoute.
+                  properties:
+                    cellRef:
+                      description: CellRef is the cell the route points to.
+                      type: string
+                    lastTransitionTime:
+                      description: LastTransitionTime is the last time the route condition
+                        changed.
+                      format: date-time
+                      type: string
+                    listenerNames:
+                      description: ListenerNames lists the listeners associated with
+                        the route.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Name identifies the HTTPRoute.
+                      type: string
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration tracks the last reconciled generation.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

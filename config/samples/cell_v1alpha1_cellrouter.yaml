@@ -1,0 +1,32 @@
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellRouter
+metadata:
+  name: default-router
+spec:
+  gateway:
+    name: cell-router-gateway
+    namespace: cell-router-system
+    gatewayClassName: istio
+    labels:
+      app.kubernetes.io/part-of: cell-router
+    listeners:
+      - name: http
+        port: 80
+        protocol: HTTP
+  routes:
+    - name: payments-route
+      cellRef: payments
+      listenerNames:
+        - http
+      hostnames:
+        - payments.example.com
+      pathMatch:
+        type: PathMatchPathPrefix
+        value: /payments
+      headerMatches:
+        - name: X-Tenant
+          value: premium
+      queryParamMatches:
+        - name: plan
+          value: gold
+      weight: 1

@@ -1,0 +1,15 @@
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: Cell
+metadata:
+  name: payments
+spec:
+  namespaceLabels:
+    team: payments
+  serviceAnnotations:
+    prometheus.io/scrape: "true"
+  workloadSelector:
+    app: payments-gateway
+  entrypoint:
+    serviceName: payments-entry
+    port: 8080
+  tearDownOnDelete: true
