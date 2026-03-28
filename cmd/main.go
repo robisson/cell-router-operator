@@ -39,6 +39,7 @@ import (
 	"github.com/robisson/cell-router-operator/internal/constants"
 	"github.com/robisson/cell-router-operator/internal/controller"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,6 +53,7 @@ func init() {
 
 	utilruntime.Must(cellv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

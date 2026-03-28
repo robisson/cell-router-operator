@@ -45,11 +45,13 @@ sequenceDiagram
 
 ## Executando Localmente com Kind
 
-Pré-requisitos: Go 1.23+, Docker, Kind ≥ v0.20, kubectl.
+Pré-requisitos: Docker, Kind ≥ v0.20 e kubectl.
+
+O script usa um container `golang:1.25.3`, então não depende da versão de Go instalada na máquina para o fluxo local.
 
 ```bash
 # executa testes, cria cluster Kind, carrega a imagem e aplica exemplos
-y ./scripts/run-local.sh
+./scripts/run-local.sh
 ```
 
 Comandos úteis após o script:
@@ -110,7 +112,7 @@ spec:
   gateway:
     name: cell-router-gateway
     namespace: cell-router-system
-    gatewayClassName: istio
+    gatewayClassName: eg
     listeners:
       - name: http
         port: 80
@@ -123,7 +125,7 @@ spec:
       hostnames:
         - payments.example.com
       pathMatch:
-        type: PathMatchPathPrefix
+        type: PathPrefix
         value: /payments
       headerMatches:
         - name: X-Tenant
@@ -146,6 +148,7 @@ kind delete cluster --name cell-router
 - Executar `make install` para instalar CRDs.
 - Executar `make run` para rodar o manager localmente (usa o `kubeconfig` atual).
 - Atualizar CRDs após mudanças nos tipos com `make generate && make manifests`.
+- Para validar ponta a ponta com Kind + Envoy Gateway, use `./scripts/run-local.sh`.
 
 ## Próximos Passos
 

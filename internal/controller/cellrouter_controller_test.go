@@ -21,6 +21,7 @@ import (
 	"github.com/robisson/cell-router-operator/internal/constants"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 var _ = Describe("CellRouter Controller", func() {
@@ -47,6 +48,7 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(cellv1alpha1.AddToScheme(scheme)).To(Succeed())
 		Expect(gatewayv1.AddToScheme(scheme)).To(Succeed())
+		Expect(gatewayv1beta1.AddToScheme(scheme)).To(Succeed())
 
 		readyCondition := metav1.Condition{Type: cellv1alpha1.CellReadyCondition, Status: metav1.ConditionTrue, LastTransitionTime: metav1.Now()}
 		baseCell = &cellv1alpha1.Cell{
@@ -103,7 +105,7 @@ var _ = Describe("CellRouter Controller", func() {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(baseCell.DeepCopy(), baseRouter.DeepCopy(), baseStaleRoute.DeepCopy()).
-			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
 			Build()
 		reconciler := &CellRouterReconciler{
 			Client:   fakeClient,
@@ -119,6 +121,14 @@ var _ = Describe("CellRouter Controller", func() {
 		gateway := &gatewayv1.Gateway{}
 		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: gatewayName}, gateway)).To(Succeed())
 		Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("istio")))
+
+		namespace := &corev1.Namespace{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Name: gatewayNS}, namespace)).To(Succeed())
+		Expect(namespace.Labels[constants.RouterNameLabel]).To(Equal(routerName))
+
+		grant := &gatewayv1beta1.ReferenceGrant{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeName + "-backend"}, grant)).To(Succeed())
+		Expect(grant.Spec.From).To(HaveLen(1))
 
 		httpRoute := &gatewayv1.HTTPRoute{}
 		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: routeName}, httpRoute)).To(Succeed())
@@ -138,18 +148,25 @@ var _ = Describe("CellRouter Controller", func() {
 
 		By("marking routes as ready and reconciling again")
 		controllerName := gatewayv1.GatewayController("cellrouter.io/controller")
-		namespace := gatewayv1.Namespace(gatewayNS)
+		parentNamespace := gatewayv1.Namespace(gatewayNS)
 		httpRoute.Status.Parents = []gatewayv1.RouteParentStatus{{
 			ParentRef: gatewayv1.ParentReference{
 				Name:      gatewayv1.ObjectName(gatewayName),
-				Namespace: &namespace,
+				Namespace: &parentNamespace,
 			},
 			ControllerName: controllerName,
-			Conditions: []metav1.Condition{{
-				Type:               string(gatewayv1.RouteConditionAccepted),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: metav1.Now(),
-			}},
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.RouteConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.Now(),
+				},
+				{
+					Type:               string(gatewayv1.RouteConditionResolvedRefs),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.Now(),
+				},
+			},
 		}}
 		Expect(fakeClient.Status().Update(ctx, httpRoute)).To(Succeed())
 
@@ -167,11 +184,22 @@ var _ = Describe("CellRouter Controller", func() {
 		dyingRouter := baseRouter.DeepCopy()
 		dyingRouter.Finalizers = []string{constants.FinalizerCellRouter}
 		dyingRouter.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		grant := &gatewayv1beta1.ReferenceGrant{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      routeName + "-backend",
+				Namespace: cellName,
+				Labels: map[string]string{
+					constants.ManagedByLabel:  constants.OperatorName,
+					constants.RouterNameLabel: routerName,
+				},
+			},
+		}
+		Expect(controllerutil.SetControllerReference(dyingRouter, grant, scheme)).To(Succeed())
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(baseCell.DeepCopy(), dyingRouter, baseStaleRoute.DeepCopy()).
-			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}).
+			WithObjects(baseCell.DeepCopy(), dyingRouter, baseStaleRoute.DeepCopy(), grant).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
 			Build()
 		reconciler := &CellRouterReconciler{
 			Client:   fakeClient,
@@ -188,6 +216,10 @@ var _ = Describe("CellRouter Controller", func() {
 
 		gateway := &gatewayv1.Gateway{}
 		err = fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: gatewayName}, gateway)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+
+		grantCheck := &gatewayv1beta1.ReferenceGrant{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeName + "-backend"}, grantCheck)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		routerCheck := &cellv1alpha1.CellRouter{}
@@ -228,5 +260,42 @@ var _ = Describe("CellRouter Controller", func() {
 		expected := map[string]struct{}{routeName: {}}
 		Expect(reconciler.cleanupStaleRoutes(ctx, baseRouter, gatewayNS, expected)).To(Succeed())
 		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: routeName}, &gatewayv1.HTTPRoute{})).To(Succeed())
+	})
+
+	It("treats routes with unresolved backend references as not ready", func() {
+		controllerName := gatewayv1.GatewayController("cellrouter.io/controller")
+		namespace := gatewayv1.Namespace(gatewayNS)
+		httpRoute := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: routeName, Namespace: gatewayNS},
+			Status: gatewayv1.HTTPRouteStatus{
+				RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{
+						{
+							ParentRef: gatewayv1.ParentReference{
+								Name:      gatewayv1.ObjectName(gatewayName),
+								Namespace: &namespace,
+							},
+							ControllerName: controllerName,
+							Conditions: []metav1.Condition{
+								{
+									Type:               string(gatewayv1.RouteConditionAccepted),
+									Status:             metav1.ConditionTrue,
+									LastTransitionTime: metav1.Now(),
+								},
+								{
+									Type:               string(gatewayv1.RouteConditionResolvedRefs),
+									Status:             metav1.ConditionFalse,
+									LastTransitionTime: metav1.Now(),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		ready, readyTime := isRouteReady(httpRoute, gatewayName, gatewayNS)
+		Expect(ready).To(BeFalse())
+		Expect(readyTime).To(BeNil())
 	})
 })

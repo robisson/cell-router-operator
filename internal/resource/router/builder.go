@@ -3,7 +3,9 @@ package router
 import (
 	"sort"
 
+	corev1 "k8s.io/api/core/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	cellv1alpha1 "github.com/robisson/cell-router-operator/api/v1alpha1"
 	"github.com/robisson/cell-router-operator/internal/constants"
@@ -16,6 +18,19 @@ type BackendTarget struct {
 	Name      string
 	Port      int32
 	Weight    *int32
+}
+
+// ReferenceGrantName returns the managed ReferenceGrant name for a route backend.
+func ReferenceGrantName(routeName string) string {
+	return routeName + "-backend"
+}
+
+// MutateGatewayNamespace applies labels to the namespace used to host the managed gateway resources.
+func MutateGatewayNamespace(ns *corev1.Namespace, router *cellv1alpha1.CellRouter) {
+	ns.Labels = metadata.Merge(ns.Labels, map[string]string{
+		constants.ManagedByLabel:  constants.OperatorName,
+		constants.RouterNameLabel: router.Name,
+	})
 }
 
 // MutateGateway applies the desired state for the gateway.
@@ -49,6 +64,32 @@ func MutateGateway(gw *gatewayv1.Gateway, router *cellv1alpha1.CellRouter) {
 	})
 
 	gw.Spec.Listeners = listeners
+}
+
+// MutateReferenceGrant applies the desired state for a backend ReferenceGrant.
+func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1alpha1.CellRouter, spec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backend BackendTarget) {
+	grant.Labels = metadata.Merge(grant.Labels, map[string]string{
+		constants.ManagedByLabel:  constants.OperatorName,
+		constants.RouterNameLabel: router.Name,
+		constants.CellNameLabel:   spec.CellRef,
+	})
+
+	grant.Spec = gatewayv1beta1.ReferenceGrantSpec{
+		From: []gatewayv1beta1.ReferenceGrantFrom{
+			{
+				Group:     gatewayv1beta1.Group(gatewayv1.GroupName),
+				Kind:      gatewayv1beta1.Kind("HTTPRoute"),
+				Namespace: gatewayv1beta1.Namespace(gatewayNamespace),
+			},
+		},
+		To: []gatewayv1beta1.ReferenceGrantTo{
+			{
+				Group: gatewayv1beta1.Group(""),
+				Kind:  gatewayv1beta1.Kind("Service"),
+				Name:  pointerTo(gatewayv1beta1.ObjectName(backend.Name)),
+			},
+		},
+	}
 }
 
 // MutateHTTPRoute applies the desired state for an HTTPRoute resource.

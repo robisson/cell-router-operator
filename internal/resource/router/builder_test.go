@@ -3,8 +3,10 @@ package router
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	cellv1alpha1 "github.com/robisson/cell-router-operator/api/v1alpha1"
 	"github.com/robisson/cell-router-operator/internal/constants"
@@ -43,6 +45,45 @@ func TestMutateGateway(t *testing.T) {
 	}
 }
 
+func TestMutateGatewayNamespace(t *testing.T) {
+	router := &cellv1alpha1.CellRouter{ObjectMeta: metav1.ObjectMeta{Name: "global"}}
+	namespace := &corev1.Namespace{}
+
+	MutateGatewayNamespace(namespace, router)
+
+	if namespace.Labels[constants.ManagedByLabel] != constants.OperatorName {
+		t.Fatalf("expected managed-by label")
+	}
+	if namespace.Labels[constants.RouterNameLabel] != "global" {
+		t.Fatalf("expected router label")
+	}
+}
+
+func TestMutateReferenceGrant(t *testing.T) {
+	router := &cellv1alpha1.CellRouter{ObjectMeta: metav1.ObjectMeta{Name: "global"}}
+	routeSpec := cellv1alpha1.CellRouteSpec{Name: "payments", CellRef: "payments"}
+	backend := BackendTarget{Name: "entry", Namespace: "payments", Port: 8080}
+	grant := &gatewayv1beta1.ReferenceGrant{}
+
+	MutateReferenceGrant(grant, router, routeSpec, "cell-routing", backend)
+
+	if len(grant.Spec.From) != 1 {
+		t.Fatalf("expected one reference source")
+	}
+	if string(grant.Spec.From[0].Namespace) != "cell-routing" {
+		t.Fatalf("expected gateway namespace to be granted")
+	}
+	if len(grant.Spec.To) != 1 {
+		t.Fatalf("expected one reference target")
+	}
+	if grant.Spec.To[0].Name == nil || string(*grant.Spec.To[0].Name) != "entry" {
+		t.Fatalf("expected backend service entry to be granted")
+	}
+	if grant.Labels[constants.CellNameLabel] != "payments" {
+		t.Fatalf("expected cell label")
+	}
+}
+
 func TestMutateHTTPRoute(t *testing.T) {
 	router := &cellv1alpha1.CellRouter{ObjectMeta: metav1.ObjectMeta{Name: "global"},
 		Spec: cellv1alpha1.CellRouterSpec{Gateway: cellv1alpha1.CellGatewaySpec{Name: "ingress", Namespace: "cell-routing"}},
@@ -78,6 +119,12 @@ func TestMutateHTTPRoute(t *testing.T) {
 	}
 	if httpRoute.Labels[constants.RouterNameLabel] != router.Name {
 		t.Fatalf("expected router label")
+	}
+}
+
+func TestReferenceGrantName(t *testing.T) {
+	if got := ReferenceGrantName("payments-route"); got != "payments-route-backend" {
+		t.Fatalf("unexpected reference grant name %q", got)
 	}
 }
 

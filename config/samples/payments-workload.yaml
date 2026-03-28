@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-gateway
+  namespace: payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-gateway
+  template:
+    metadata:
+      labels:
+        app: payments-gateway
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0.0
+          args:
+            - -listen=:8080
+            - -text=payments backend
+          ports:
+            - containerPort: 8080

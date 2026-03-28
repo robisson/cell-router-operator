@@ -87,6 +87,8 @@ type CellGatewayListener struct {
 	Hostname *gatewayv1.Hostname `json:"hostname,omitempty"`
 
 	// TLS configures TLS settings for the listener when the protocol requires it.
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	TLS *gatewayv1.ListenerTLSConfig `json:"tls,omitempty"`
 }
