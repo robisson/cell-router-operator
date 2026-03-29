@@ -37,7 +37,7 @@ const (
 	ConditionReasonError = "Error"
 )
 
-// CellSpec defines the desired state of a Cell.
+// CellSpec defines the desired state of Cell.
 type CellSpec struct {
 	// Namespace overrides the namespace name generated for the cell.
 	// When omitted, the namespace defaults to the Cell's name.
@@ -127,26 +127,26 @@ type CellStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=cell
 
-// Cell is the Schema for the cells API
+// Cell represents a managed cell and its entrypoint service.
 type Cell struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
+	// ObjectMeta contains the standard object metadata.
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
-	// spec defines the desired state of Cell
+	// Spec defines the desired state of Cell.
 	// +required
 	Spec CellSpec `json:"spec"`
 
-	// status defines the observed state of Cell
+	// Status defines the observed state of Cell.
 	// +optional
 	Status CellStatus `json:"status,omitempty,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// CellList contains a list of Cell
+// CellList contains a list of Cell resources.
 type CellList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

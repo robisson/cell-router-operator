@@ -1,0 +1,13 @@
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: Cell
+metadata:
+  name: orders
+spec:
+  namespaceLabels:
+    team: orders
+  workloadSelector:
+    app: orders-gateway
+  entrypoint:
+    serviceName: orders-entry
+    port: 8080
+  tearDownOnDelete: true

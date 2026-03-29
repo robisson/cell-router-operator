@@ -30,3 +30,13 @@ spec:
         - name: plan
           value: gold
       weight: 1
+    - name: orders-route
+      cellRef: orders
+      listenerNames:
+        - http
+      hostnames:
+        - orders.example.com
+      pathMatch:
+        type: PathPrefix
+        value: /orders
+      weight: 1

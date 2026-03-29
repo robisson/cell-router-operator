@@ -27,6 +27,7 @@ import (
 )
 
 const (
+	// requeueDelay is used while waiting for Gateway API resources to report readiness.
 	requeueDelay = 10 * time.Second
 )
 
@@ -74,6 +75,7 @@ func (r *CellRouterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.reconcileNormal(ctx, &router, logger)
 }
 
+// reconcileNormal reconciles the gateway namespace, gateway, routes, and status for a live CellRouter.
 func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cellv1alpha1.CellRouter, logger logr.Logger) (ctrl.Result, error) {
 	statusBase := router.DeepCopy()
 	gatewayNamespace := router.Spec.Gateway.Namespace
@@ -129,6 +131,7 @@ func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cell
 	return ctrl.Result{}, nil
 }
 
+// reconcileDeletion removes managed Gateway API resources before dropping the CellRouter finalizer.
 func (r *CellRouterReconciler) reconcileDeletion(ctx context.Context, router *cellv1alpha1.CellRouter, logger logr.Logger) (ctrl.Result, error) {
 	gatewayNamespace := router.Spec.Gateway.Namespace
 
@@ -158,6 +161,7 @@ func (r *CellRouterReconciler) reconcileDeletion(ctx context.Context, router *ce
 	return ctrl.Result{}, nil
 }
 
+// ensureFinalizer makes sure the CellRouter finalizer is present before reconciliation continues.
 func (r *CellRouterReconciler) ensureFinalizer(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	if controllerutil.ContainsFinalizer(router, constants.FinalizerCellRouter) {
 		return nil
@@ -168,6 +172,7 @@ func (r *CellRouterReconciler) ensureFinalizer(ctx context.Context, router *cell
 	return r.Patch(ctx, router, patch)
 }
 
+// reconcileGatewayNamespace creates or updates the namespace that hosts the managed Gateway.
 func (r *CellRouterReconciler) reconcileGatewayNamespace(ctx context.Context, router *cellv1alpha1.CellRouter, namespace string) error {
 	if namespace == "" {
 		return fmt.Errorf("gateway namespace is required")
@@ -184,6 +189,7 @@ func (r *CellRouterReconciler) reconcileGatewayNamespace(ctx context.Context, ro
 	return err
 }
 
+// reconcileGateway creates or updates the managed Gateway and returns its namespace/name reference.
 func (r *CellRouterReconciler) reconcileGateway(ctx context.Context, router *cellv1alpha1.CellRouter) (string, error) {
 	gateway := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{
 		Name:      router.Spec.Gateway.Name,
@@ -205,6 +211,7 @@ func (r *CellRouterReconciler) reconcileGateway(ctx context.Context, router *cel
 	return fmt.Sprintf("%s/%s", gateway.Namespace, gateway.Name), nil
 }
 
+// reconcileRoutes reconciles all managed HTTPRoutes and ReferenceGrants and summarizes their readiness.
 func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, logger logr.Logger) (allReady bool, needsRequeue bool, statuses []cellv1alpha1.ManagedRouteStatus, err error) {
 	expected := make(map[string]struct{}, len(router.Spec.Routes))
 	expectedGrants := make(map[string]struct{}, len(router.Spec.Routes))
@@ -286,6 +293,7 @@ func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cell
 	return allReady, needsRequeue, statuses, nil
 }
 
+// isRouteReady reports whether the HTTPRoute has been accepted, and resolved when that condition is present, by the target Gateway.
 func isRouteReady(httpRoute *gatewayv1.HTTPRoute, gatewayName, gatewayNamespace string) (bool, *metav1.Time) {
 	for _, parent := range httpRoute.Status.Parents {
 		if string(parent.ParentRef.Name) != gatewayName {
@@ -327,6 +335,7 @@ func isRouteReady(httpRoute *gatewayv1.HTTPRoute, gatewayName, gatewayNamespace 
 	return false, nil
 }
 
+// reconcileReferenceGrant creates or updates the cross-namespace permission needed by a route backend.
 func (r *CellRouterReconciler) reconcileReferenceGrant(ctx context.Context, router *cellv1alpha1.CellRouter, routeSpec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backend routerresource.BackendTarget) error {
 	grant := &gatewayv1beta1.ReferenceGrant{ObjectMeta: metav1.ObjectMeta{
 		Name:      routerresource.ReferenceGrantName(routeSpec.Name),
@@ -343,6 +352,7 @@ func (r *CellRouterReconciler) reconcileReferenceGrant(ctx context.Context, rout
 	return err
 }
 
+// cleanupStaleRoutes deletes managed HTTPRoutes that are no longer declared in the CellRouter spec.
 func (r *CellRouterReconciler) cleanupStaleRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, expected map[string]struct{}) error {
 	var existing gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &existing,
@@ -369,6 +379,7 @@ func (r *CellRouterReconciler) cleanupStaleRoutes(ctx context.Context, router *c
 	return nil
 }
 
+// cleanupStaleReferenceGrants deletes managed ReferenceGrants that are no longer needed.
 func (r *CellRouterReconciler) cleanupStaleReferenceGrants(ctx context.Context, router *cellv1alpha1.CellRouter, expected map[string]struct{}) error {
 	var existing gatewayv1beta1.ReferenceGrantList
 	if err := r.List(ctx, &existing,
@@ -394,6 +405,7 @@ func (r *CellRouterReconciler) cleanupStaleReferenceGrants(ctx context.Context, 
 	return nil
 }
 
+// resolveBackend converts a Cell into the Service reference used by HTTPRoute backends.
 func (r *CellRouterReconciler) resolveBackend(cell *cellv1alpha1.Cell) (routerresource.BackendTarget, error) {
 	namespace := cell.Status.Namespace
 	if namespace == "" {
@@ -419,6 +431,7 @@ func (r *CellRouterReconciler) resolveBackend(cell *cellv1alpha1.Cell) (routerre
 	}, nil
 }
 
+// deleteManagedHTTPRoutes removes owned HTTPRoutes during finalization.
 func (r *CellRouterReconciler) deleteManagedHTTPRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, namespace string) error {
 	var routes gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &routes,
@@ -444,6 +457,7 @@ func (r *CellRouterReconciler) deleteManagedHTTPRoutes(ctx context.Context, rout
 	return nil
 }
 
+// deleteManagedGateway removes the owned Gateway during finalization.
 func (r *CellRouterReconciler) deleteManagedGateway(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	gateway := &gatewayv1.Gateway{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -464,6 +478,7 @@ func (r *CellRouterReconciler) deleteManagedGateway(ctx context.Context, router 
 	return client.IgnoreNotFound(r.Delete(ctx, gateway))
 }
 
+// deleteManagedReferenceGrants removes owned ReferenceGrants during finalization.
 func (r *CellRouterReconciler) deleteManagedReferenceGrants(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	var grants gatewayv1beta1.ReferenceGrantList
 	if err := r.List(ctx, &grants,
@@ -488,10 +503,12 @@ func (r *CellRouterReconciler) deleteManagedReferenceGrants(ctx context.Context,
 	return nil
 }
 
+// patchRouterStatus patches only the CellRouter status subresource against the provided base copy.
 func (r *CellRouterReconciler) patchRouterStatus(ctx context.Context, router *cellv1alpha1.CellRouter, base *cellv1alpha1.CellRouter) error {
 	return r.Status().Patch(ctx, router, client.MergeFrom(base))
 }
 
+// setRouterCondition upserts a status condition on the CellRouter.
 func (r *CellRouterReconciler) setRouterCondition(router *cellv1alpha1.CellRouter, condType string, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
 		Type:               condType,

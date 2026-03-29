@@ -211,26 +211,26 @@ type CellRouterStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=cellrtr
 
-// CellRouter is the Schema for the cellrouters API
+// CellRouter represents the routing layer that exposes cell entrypoints.
 type CellRouter struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
+	// ObjectMeta contains the standard object metadata.
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
-	// spec defines the desired state of CellRouter
+	// Spec defines the desired state of CellRouter.
 	// +required
 	Spec CellRouterSpec `json:"spec"`
 
-	// status defines the observed state of CellRouter
+	// Status defines the observed state of CellRouter.
 	// +optional
 	Status CellRouterStatus `json:"status,omitempty,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// CellRouterList contains a list of CellRouter
+// CellRouterList contains a list of CellRouter resources.
 type CellRouterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

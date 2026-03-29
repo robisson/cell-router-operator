@@ -147,16 +147,26 @@ echo "[cell-router] applying sample cell"
 kubectl apply -f config/samples/cell_v1alpha1_cell.yaml
 wait_for_jsonpath "cell/payments" '{.status.conditions[?(@.type=="Ready")].status}' "True"
 
+echo "[cell-router] applying second sample cell"
+kubectl apply -f config/samples/cell_v1alpha1_orders_cell.yaml
+wait_for_jsonpath "cell/orders" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+
 echo "[cell-router] deploying sample workload in the cell namespace"
 kubectl apply -f config/samples/payments-workload.yaml
 kubectl -n payments wait deploy/payments-gateway --for condition=Available --timeout=120s
+
+echo "[cell-router] deploying second sample workload in the cell namespace"
+kubectl apply -f config/samples/orders-workload.yaml
+kubectl -n orders wait deploy/orders-gateway --for condition=Available --timeout=120s
 
 echo "[cell-router] applying sample cell router"
 kubectl apply -f config/samples/cell_v1alpha1_cellrouter.yaml
 wait_for_jsonpath "gateway -n cell-router-system cell-router-gateway" '{.status.conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "cellrouter/default-router" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
 
 echo "[cell-router] port-forwarding Envoy service to verify traffic"
 ENVOY_SERVICE=$(kubectl get svc -n envoy-gateway-system \
@@ -180,6 +190,15 @@ RESPONSE=$(curl -fsS \
 
 if [[ "${RESPONSE}" != *"payments backend"* ]]; then
   echo "[cell-router] unexpected routed response: ${RESPONSE}" >&2
+  exit 1
+fi
+
+ORDERS_RESPONSE=$(curl -fsS \
+  -H 'Host: orders.example.com' \
+  'http://127.0.0.1:8888/orders')
+
+if [[ "${ORDERS_RESPONSE}" != *"orders backend"* ]]; then
+  echo "[cell-router] unexpected routed response: ${ORDERS_RESPONSE}" >&2
   exit 1
 fi
 

@@ -61,6 +61,7 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return r.reconcileNormal(ctx, &cell, logger)
 }
 
+// reconcileNormal reconciles the managed namespace and entrypoint service for a live Cell.
 func (r *CellReconciler) reconcileNormal(ctx context.Context, cell *cellv1alpha1.Cell, logger logr.Logger) (ctrl.Result, error) {
 	statusBase := cell.DeepCopy()
 	namespaceName := effectiveNamespace(cell)
@@ -97,6 +98,7 @@ func (r *CellReconciler) reconcileNormal(ctx context.Context, cell *cellv1alpha1
 	return ctrl.Result{}, nil
 }
 
+// reconcileDeletion removes managed resources before dropping the Cell finalizer.
 func (r *CellReconciler) reconcileDeletion(ctx context.Context, cell *cellv1alpha1.Cell, logger logr.Logger) (ctrl.Result, error) {
 	namespaceName := effectiveNamespace(cell)
 
@@ -123,6 +125,7 @@ func (r *CellReconciler) reconcileDeletion(ctx context.Context, cell *cellv1alph
 	return ctrl.Result{}, nil
 }
 
+// ensureFinalizer makes sure the Cell finalizer is present before reconciliation continues.
 func (r *CellReconciler) ensureFinalizer(ctx context.Context, cell *cellv1alpha1.Cell) error {
 	if controllerutil.ContainsFinalizer(cell, constants.FinalizerCell) {
 		return nil
@@ -133,6 +136,7 @@ func (r *CellReconciler) ensureFinalizer(ctx context.Context, cell *cellv1alpha1
 	return r.Patch(ctx, cell, patch)
 }
 
+// reconcileNamespace creates or updates the namespace managed for the Cell.
 func (r *CellReconciler) reconcileNamespace(ctx context.Context, cell *cellv1alpha1.Cell, name string) error {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 
@@ -146,6 +150,7 @@ func (r *CellReconciler) reconcileNamespace(ctx context.Context, cell *cellv1alp
 	return err
 }
 
+// reconcileService creates or updates the Cell entrypoint Service and returns its fully qualified name.
 func (r *CellReconciler) reconcileService(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) (string, error) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name:      cell.Spec.Entrypoint.ServiceName,
@@ -167,6 +172,7 @@ func (r *CellReconciler) reconcileService(ctx context.Context, cell *cellv1alpha
 	return fmt.Sprintf("%s/%s", namespace, service.Name), nil
 }
 
+// deleteEntrypointService removes the managed entrypoint Service when it is owned by the Cell.
 func (r *CellReconciler) deleteEntrypointService(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) error {
 	if namespace == "" {
 		return nil
@@ -188,6 +194,7 @@ func (r *CellReconciler) deleteEntrypointService(ctx context.Context, cell *cell
 	return client.IgnoreNotFound(r.Delete(ctx, service))
 }
 
+// deleteNamespaceIfManaged removes the namespace only when the operator created it for this Cell.
 func (r *CellReconciler) deleteNamespaceIfManaged(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) error {
 	if namespace == "" {
 		return nil
@@ -209,10 +216,12 @@ func (r *CellReconciler) deleteNamespaceIfManaged(ctx context.Context, cell *cel
 	return client.IgnoreNotFound(r.Delete(ctx, ns))
 }
 
+// patchStatus patches only the Cell status subresource against the provided base copy.
 func (r *CellReconciler) patchStatus(ctx context.Context, cell *cellv1alpha1.Cell, base *cellv1alpha1.Cell) error {
 	return r.Status().Patch(ctx, cell, client.MergeFrom(base))
 }
 
+// setCellCondition upserts a status condition on the Cell.
 func (r *CellReconciler) setCellCondition(cell *cellv1alpha1.Cell, condType string, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
 		Type:               condType,
@@ -223,6 +232,7 @@ func (r *CellReconciler) setCellCondition(cell *cellv1alpha1.Cell, condType stri
 	})
 }
 
+// effectiveNamespace returns the namespace that should host the Cell resources.
 func effectiveNamespace(cell *cellv1alpha1.Cell) string {
 	if cell.Spec.Namespace != "" {
 		return cell.Spec.Namespace

@@ -1,85 +1,145 @@
 # Cell Router Operator
 
-Operador Kubernetes escrito em Go com Kubebuilder para orquestrar componentes de uma arquitetura baseada em células. O operador cria e mantém:
+`cell-router-operator` is a Kubernetes operator built with Go and Kubebuilder.
 
-- **Cells** – Namespaces isolados com serviços de entrada próprios.
-- **CellRouters** – Gateways baseados no Gateway API que publicam rotas HTTP para as células.
+It manages two cluster-scoped custom resources:
 
-O projeto aplica padrões de operadores (reconciliação idempotente, uso de finalizers, status rico) e princípios SOLID/Clean Code para manter o código modular.
+- `Cell`: creates and maintains an isolated namespace plus an entrypoint `Service` for a workload set.
+- `CellRouter`: creates and maintains a `Gateway`, `HTTPRoute` resources, and the required `ReferenceGrant` objects to route traffic to one or more cells.
 
-## Visão Geral
+The project is designed for local validation with Kind + Envoy Gateway and for extension as a foundation for cell-based platform routing.
+
+## What It Does
+
+At a high level:
+
+1. A `Cell` declares where a workload lives and how it should be exposed internally.
+2. The operator creates the namespace and entrypoint `Service` for that cell.
+3. A `CellRouter` declares HTTP routing rules for one or more cells.
+4. The operator creates a Gateway API `Gateway` and one `HTTPRoute` per declared route.
+5. Traffic is routed to the target cell service according to host, path, headers, query params, and weight.
+
+## Architecture
 
 ```mermaid
 graph TD
-    A[Cell CR] -->|Reconcile| B(Cell Controller)
-    B -->|Namespace & Service| C[(Kubernetes API)]
-    D[CellRouter CR] -->|Reconcile| E(CellRouter Controller)
-    E -->|Gateway & HTTPRoutes| C
-    E -->|Observa status| F[Gateway API]
-    F -->|Expõe tráfego| G[Pods na Cell]
+    A[Cell CR] --> B[Cell Controller]
+    B --> C[Namespace]
+    B --> D[Entrypoint Service]
+
+    E[CellRouter CR] --> F[CellRouter Controller]
+    F --> G[Gateway Namespace]
+    F --> H[Gateway]
+    F --> I[HTTPRoute]
+    F --> J[ReferenceGrant]
+
+    H --> K[Gateway Controller]
+    I --> K
+    J --> K
+    K --> L[Cell Service Backends]
 ```
 
-Fluxo de reconciliação simplificado para um `CellRouter`:
+## Requirements
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant API as Kubernetes API
-    participant Controller as CellRouter Controller
-    participant Gateway as Gateway API
+For the local end-to-end flow:
 
-    User->>API: cria CellRouter
-    API-->>Controller: evento de reconcile
-    Controller->>Gateway: cria/atualiza Gateway Listener
-    Controller->>Gateway: cria/atualiza HTTPRoutes apontando para o Service da Cell
-    Gateway-->>Controller: atualiza condições (Accepted/ResolvedRefs)
-    Controller->>API: atualiza status do CellRouter
-```
+- Docker
+- Kind
+- kubectl
+- Helm
 
-## Estrutura do Projeto
+For development on the host:
 
-- `api/v1alpha1`: Tipos das CRDs e validações.
-- `internal/controller`: Reconcilers, lógica de limpeza e atualização de status.
-- `internal/resource`: Builders idempotentes de Namespaces, Services, Gateways e HTTPRoutes.
-- `scripts/run-local.sh`: Script único para preparar um ambiente Kind, rodar testes, construir imagem e aplicar exemplos.
+- Go 1.25.3
+- Kubebuilder 4.13.1
 
-## Executando Localmente com Kind
+The repository already contains a scripted local flow that uses a Dockerized Go toolchain for repeatability.
 
-Pré-requisitos: Docker, Kind ≥ v0.20 e kubectl.
+## Run Locally
 
-O script usa um container `golang:1.25.3`, então não depende da versão de Go instalada na máquina para o fluxo local.
+Use the single local script:
 
 ```bash
-# executa testes, cria cluster Kind, carrega a imagem e aplica exemplos
 ./scripts/run-local.sh
 ```
 
-Comandos úteis após o script:
+The script does the following:
+
+1. Ensures a Kind cluster exists.
+2. Installs Gateway API CRDs.
+3. Installs Envoy Gateway via Helm.
+4. Applies the local `GatewayClass`.
+5. Runs unit tests with coverage.
+6. Builds the operator image.
+7. Loads the image into Kind.
+8. Installs CRDs and deploys the controller.
+9. Applies two sample cells: `payments` and `orders`.
+10. Deploys two sample workloads.
+11. Applies a sample `CellRouter`.
+12. Verifies routing with real `curl` requests.
+
+## Local Verification
+
+The sample router exposes two routes:
+
+- `payments.example.com` + `/payments` + header `X-Tenant: premium` + query `plan=gold` -> `payments`
+- `orders.example.com` + `/orders` -> `orders`
+
+Useful commands after the script:
 
 ```bash
 kubectl get cells
 kubectl get cellrouters
 kubectl get gateways -A
 kubectl get httproutes -A
+kubectl get referencegrants -A
 ```
 
-Para remover o cluster:
+Manual verification example:
 
 ```bash
-kind delete cluster --name cell-router
+ENVOY_SERVICE=$(kubectl get svc -n envoy-gateway-system \
+  --selector=gateway.envoyproxy.io/owning-gateway-namespace=cell-router-system,gateway.envoyproxy.io/owning-gateway-name=cell-router-gateway \
+  -o jsonpath='{.items[0].metadata.name}')
+
+kubectl -n envoy-gateway-system port-forward service/${ENVOY_SERVICE} 8888:80
 ```
 
-## Testes e Cobertura
+In another terminal:
 
 ```bash
-# cobertura agregada (>80%)
+curl -H 'Host: payments.example.com' -H 'X-Tenant: premium' \
+  'http://127.0.0.1:8888/payments?plan=gold'
+
+curl -H 'Host: orders.example.com' \
+  'http://127.0.0.1:8888/orders'
+```
+
+Expected responses:
+
+```text
+payments backend
+orders backend
+```
+
+## Tests
+
+Run the core test suite:
+
+```bash
 go test ./api/... ./internal/... -coverprofile=coverage.out
 go tool cover -func=coverage.out | tail -n1
 ```
 
-A suíte atinge **≈81%** de cobertura graças a testes unitários dos reconcilers, builders e funções utilitárias.
+The current suite covers:
 
-## Recursos Customizados
+- API deep-copy behavior
+- `Cell` reconciliation
+- `CellRouter` reconciliation
+- Namespace, Service, Gateway, HTTPRoute, and `ReferenceGrant` builders
+- Metadata merge helpers
+
+## Main Custom Resources
 
 ### Cell
 
@@ -89,12 +149,8 @@ kind: Cell
 metadata:
   name: payments
 spec:
-  namespaceLabels:
-    team: payments
   workloadSelector:
     app: payments-gateway
-  serviceAnnotations:
-    prometheus.io/scrape: "true"
   entrypoint:
     serviceName: payments-entry
     port: 8080
@@ -120,10 +176,10 @@ spec:
   routes:
     - name: payments-route
       cellRef: payments
-      listenerNames:
-        - http
       hostnames:
         - payments.example.com
+      listenerNames:
+        - http
       pathMatch:
         type: PathPrefix
         value: /payments
@@ -133,25 +189,26 @@ spec:
       queryParamMatches:
         - name: plan
           value: gold
-      weight: 1
+    - name: orders-route
+      cellRef: orders
+      hostnames:
+        - orders.example.com
+      listenerNames:
+        - http
+      pathMatch:
+        type: PathPrefix
+        value: /orders
 ```
 
-## Limpeza Manual
+## Repository Layout
 
-```bash
-make undeploy
-kind delete cluster --name cell-router
-```
+- `api/v1alpha1`: CRD types, validation markers, status models
+- `cmd/main.go`: manager bootstrap and controller wiring
+- `internal/controller`: reconcilers for `Cell` and `CellRouter`
+- `internal/resource`: idempotent resource builders
+- `config`: CRDs, RBAC, manager manifests, samples
+- `scripts/run-local.sh`: local end-to-end setup and verification
 
-## Desenvolvimento
+## Developer Documentation
 
-- Executar `make install` para instalar CRDs.
-- Executar `make run` para rodar o manager localmente (usa o `kubeconfig` atual).
-- Atualizar CRDs após mudanças nos tipos com `make generate && make manifests`.
-- Para validar ponta a ponta com Kind + Envoy Gateway, use `./scripts/run-local.sh`.
-
-## Próximos Passos
-
-- Adicionar testes end-to-end reais utilizando os exemplos de Gateway.
-- Integrar métricas personalizadas expostas pelo controller manager.
-- Automatizar lint com `golangci-lint` e checagens de segurança de imagens.
+For an internal design walkthrough, reconciliation details, extension guidance, and implementation notes, see [DEVELOPER_GUIDE.md](/Users/robisson/projetcs/golang/k8s/cell-router-operator/DEVELOPER_GUIDE.md).

@@ -146,6 +146,7 @@ func MutateHTTPRoute(route *gatewayv1.HTTPRoute, router *cellv1alpha1.CellRouter
 	}
 }
 
+// buildMatches translates the CellRouteSpec matching options into Gateway API route matches.
 func buildMatches(spec cellv1alpha1.CellRouteSpec) []gatewayv1.HTTPRouteMatch {
 	matches := make([]gatewayv1.HTTPRouteMatch, 0, 1)
 
@@ -188,6 +189,7 @@ func buildMatches(spec cellv1alpha1.CellRouteSpec) []gatewayv1.HTTPRouteMatch {
 	return matches
 }
 
+// pointerTo returns a pointer to value.
 func pointerTo[T any](value T) *T {
 	return &value
 }
