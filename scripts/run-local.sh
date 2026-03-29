@@ -109,11 +109,27 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s
 echo "[cell-router] installing Gateway API CRDs from ${GATEWAY_API_URL}"
 retry 5 5 kubectl apply -f "${GATEWAY_API_URL}"
 
+if ! helm status eg -n envoy-gateway-system >/dev/null 2>&1 && \
+  kubectl get namespace envoy-gateway-system >/dev/null 2>&1 && \
+  kubectl -n envoy-gateway-system get serviceaccount envoy-gateway >/dev/null 2>&1; then
+  echo "[cell-router] removing stale non-Helm Envoy Gateway installation"
+  kubectl delete namespace envoy-gateway-system --wait=true
+fi
+
+if ! helm status eg -n envoy-gateway-system >/dev/null 2>&1; then
+  kubectl delete clusterrole/eg-gateway-helm-envoy-gateway-role \
+    clusterrole/eg-gateway-helm-certgen:envoy-gateway-system \
+    clusterrolebinding/eg-gateway-helm-envoy-gateway-rolebinding \
+    clusterrolebinding/eg-gateway-helm-certgen:envoy-gateway-system \
+    --ignore-not-found=true >/dev/null
+fi
+
 echo "[cell-router] installing Envoy Gateway ${ENVOY_GATEWAY_VERSION} via Helm"
 retry 5 5 helm upgrade --install eg "${ENVOY_GATEWAY_CHART}" \
   --version "${ENVOY_GATEWAY_VERSION}" \
   --namespace envoy-gateway-system \
   --create-namespace \
+  --skip-crds \
   --wait \
   --timeout 5m
 kubectl -n envoy-gateway-system wait deploy/envoy-gateway \
@@ -122,6 +138,9 @@ kubectl -n envoy-gateway-system wait deploy/envoy-gateway \
 echo "[cell-router] applying local GatewayClass manifest"
 kubectl apply -f "${ENVOY_GATEWAY_CLASS_MANIFEST}"
 wait_for_jsonpath "gatewayclass/eg" '{.spec.controllerName}' "gateway.envoyproxy.io/gatewayclass-controller"
+
+echo "[cell-router] labeling Envoy Gateway namespace for sample network policy access"
+kubectl label namespace envoy-gateway-system cellrouter.io/cell-access=true --overwrite
 
 echo "[cell-router] running unit tests with coverage"
 docker_go test ./api/... ./internal/... -coverprofile=coverage.out
@@ -145,11 +164,12 @@ kubectl -n cell-router-operator-system wait deploy/cell-router-operator-controll
 
 echo "[cell-router] applying sample cell"
 kubectl apply -f config/samples/cell_v1alpha1_cell.yaml
-wait_for_jsonpath "cell/payments" '{.status.conditions[?(@.type=="Ready")].status}' "True"
 
 echo "[cell-router] applying second sample cell"
 kubectl apply -f config/samples/cell_v1alpha1_orders_cell.yaml
-wait_for_jsonpath "cell/orders" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+
+echo "[cell-router] applying canary sample cell"
+kubectl apply -f config/samples/cell_v1alpha1_payments_canary_cell.yaml
 
 echo "[cell-router] deploying sample workload in the cell namespace"
 kubectl apply -f config/samples/payments-workload.yaml
@@ -159,14 +179,38 @@ echo "[cell-router] deploying second sample workload in the cell namespace"
 kubectl apply -f config/samples/orders-workload.yaml
 kubectl -n orders wait deploy/orders-gateway --for condition=Available --timeout=120s
 
+echo "[cell-router] deploying canary workload in the cell namespace"
+kubectl apply -f config/samples/payments-canary-workload.yaml
+kubectl -n payments-canary wait deploy/payments-canary-gateway --for condition=Available --timeout=120s
+
+echo "[cell-router] waiting for sample cells to become traffic-ready"
+wait_for_jsonpath "cell/payments" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+wait_for_jsonpath "cell/orders" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+wait_for_jsonpath "cell/payments-canary" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+
+echo "[cell-router] verifying sample policies were reconciled"
+kubectl -n payments get resourcequota/cell-quota >/dev/null
+kubectl -n payments get limitrange/cell-limits >/dev/null
+kubectl -n payments get networkpolicy/cell-entrypoint >/dev/null
+
 echo "[cell-router] applying sample cell router"
 kubectl apply -f config/samples/cell_v1alpha1_cellrouter.yaml
+echo "[cell-router] applying sample placements"
+kubectl apply -f config/samples/cell_v1alpha1_cellplacement.yaml
 wait_for_jsonpath "gateway -n cell-router-system cell-router-gateway" '{.status.conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system beta-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system premium-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system standard-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "cellrouter/default-router" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system beta-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system premium-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system standard-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "cellplacement/premium-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
+wait_for_jsonpath "cellplacement/standard-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
 
 echo "[cell-router] port-forwarding Envoy service to verify traffic"
 ENVOY_SERVICE=$(kubectl get svc -n envoy-gateway-system \
@@ -202,6 +246,65 @@ if [[ "${ORDERS_RESPONSE}" != *"orders backend"* ]]; then
   exit 1
 fi
 
+PREMIUM_RESPONSE=$(curl -fsS \
+  -H 'Host: api.example.com' \
+  -H 'X-Tenant: premium' \
+  'http://127.0.0.1:8888/tenant')
+
+if [[ "${PREMIUM_RESPONSE}" != *"payments backend"* ]]; then
+  echo "[cell-router] unexpected premium placement response: ${PREMIUM_RESPONSE}" >&2
+  exit 1
+fi
+
+STANDARD_RESPONSE=$(curl -fsS \
+  -H 'Host: api.example.com' \
+  -H 'X-Tenant: standard' \
+  'http://127.0.0.1:8888/tenant')
+
+if [[ "${STANDARD_RESPONSE}" != *"orders backend"* ]]; then
+  echo "[cell-router] unexpected standard placement response: ${STANDARD_RESPONSE}" >&2
+  exit 1
+fi
+
+BETA_RESPONSE=$(curl -fsS \
+  -H 'Host: beta.example.com' \
+  'http://127.0.0.1:8888/beta')
+
+if [[ "${BETA_RESPONSE}" != *"payments canary backend"* ]]; then
+  echo "[cell-router] unexpected beta route response before draining: ${BETA_RESPONSE}" >&2
+  exit 1
+fi
+
+echo "[cell-router] verifying weighted multi-backend routing"
+PAYMENTS_BACKENDS=$(
+  for _ in $(seq 1 30); do
+    curl -fsS \
+      -H 'Host: payments.example.com' \
+      -H 'X-Tenant: premium' \
+      'http://127.0.0.1:8888/payments?plan=gold'
+    printf '\n'
+  done | sort -u
+)
+
+if [[ "${PAYMENTS_BACKENDS}" != *"payments backend"* ]] || [[ "${PAYMENTS_BACKENDS}" != *"payments canary backend"* ]]; then
+  echo "[cell-router] weighted route did not reach both backends: ${PAYMENTS_BACKENDS}" >&2
+  exit 1
+fi
+
+echo "[cell-router] draining payments-canary to validate fallback behavior"
+kubectl patch cell payments-canary --type merge -p '{"spec":{"state":"Draining"}}'
+wait_for_jsonpath "cell/payments-canary" '{.status.operationalState}' "Draining" 120
+wait_for_jsonpath "cell/payments-canary" '{.status.conditions[?(@.type=="Ready")].status}' "False" 120
+
+FALLBACK_RESPONSE=$(curl -fsS \
+  -H 'Host: beta.example.com' \
+  'http://127.0.0.1:8888/beta')
+
+if [[ "${FALLBACK_RESPONSE}" != *"payments backend"* ]]; then
+  echo "[cell-router] fallback route did not switch to the primary cell: ${FALLBACK_RESPONSE}" >&2
+  exit 1
+fi
+
 echo "[cell-router] setup complete"
 echo "[cell-router] routing validated successfully"
-echo "Check resource status via: kubectl get cells, kubectl get cellrouters, kubectl get gateways -A, kubectl get httproutes -A"
+echo "Check resource status via: kubectl get cells, kubectl get cellplacements, kubectl get cellrouters, kubectl get gateways -A, kubectl get httproutes -A"

@@ -19,7 +19,7 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: CellRouter is the Schema for the cellrouters API
+        description: CellRouter represents the routing layer that exposes cell entrypoints.
         properties:
           apiVersion:
             description: |-
@@ -39,7 +39,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of CellRouter
+            description: Spec defines the desired state of CellRouter.
             properties:
               gateway:
                 description: Gateway defines the Gateway resource that exposes the
@@ -123,11 +123,48 @@ spec:
                   description: CellRouteSpec describes an HTTPRoute managed by the
                     operator.
                   properties:
+                    additionalBackends:
+                      description: |-
+                        AdditionalBackends expands the route into a weighted multi-backend rule.
+                        Each referenced Cell must be traffic-ready before it is included.
+                      items:
+                        description: CellRouteBackendRef points to a Cell and optional
+                          weight within a generated HTTPRoute rule.
+                        properties:
+                          cellRef:
+                            description: CellRef points to the target Cell.
+                            minLength: 1
+                            type: string
+                          weight:
+                            description: Weight controls the relative traffic weight
+                              towards the referenced Cell.
+                            format: int32
+                            type: integer
+                        required:
+                        - cellRef
+                        type: object
+                      type: array
                     cellRef:
                       description: CellRef points to the target Cell that receives
                         the traffic.
                       minLength: 1
                       type: string
+                    fallbackBackend:
+                      description: FallbackBackend is used when no primary backend
+                        for the route is traffic-ready.
+                      properties:
+                        cellRef:
+                          description: CellRef points to the target Cell.
+                          minLength: 1
+                          type: string
+                        weight:
+                          description: Weight controls the relative traffic weight
+                            towards the referenced Cell.
+                          format: int32
+                          type: integer
+                      required:
+                      - cellRef
+                      type: object
                     headerMatches:
                       description: HeaderMatches constrains traffic using HTTP header
                         matching.
@@ -256,7 +293,7 @@ spec:
             - routes
             type: object
           status:
-            description: status defines the observed state of CellRouter
+            description: Status defines the observed state of CellRouter.
             properties:
               conditions:
                 description: Conditions represent the current state of the CellRouter
@@ -329,6 +366,12 @@ spec:
                   description: ManagedRouteStatus reports the status of a generated
                     HTTPRoute.
                   properties:
+                    backendRefs:
+                      description: BackendRefs lists the backend cells currently materialized
+                        for the route.
+                      items:
+                        type: string
+                      type: array
                     cellRef:
                       description: CellRef is the cell the route points to.
                       type: string
@@ -345,6 +388,13 @@ spec:
                       type: array
                     name:
                       description: Name identifies the HTTPRoute.
+                      type: string
+                    placementRef:
+                      description: PlacementRef identifies the CellPlacement that
+                        produced the route when applicable.
+                      type: string
+                    reason:
+                      description: Reason summarizes why the route is ready or waiting.
                       type: string
                   type: object
                 type: array

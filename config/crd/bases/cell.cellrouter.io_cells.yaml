@@ -19,7 +19,7 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Cell is the Schema for the cells API
+        description: Cell represents a managed cell and its entrypoint service.
         properties:
           apiVersion:
             description: |-
@@ -39,7 +39,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Cell
+            description: Spec defines the desired state of Cell.
             properties:
               entrypoint:
                 description: Entrypoint configures the Service that exposes workloads
@@ -94,6 +94,83 @@ spec:
                   NamespaceLabels are merged into the managed Namespace labels.
                   Keys managed by the operator cannot be overridden.
                 type: object
+              policies:
+                description: Policies configures optional namespace-scoped resources
+                  managed alongside the cell.
+                properties:
+                  limitRange:
+                    description: LimitRange requests creation of a LimitRange for
+                      container defaults and bounds.
+                    properties:
+                      default:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: Default applies default limits to containers
+                          that omit them.
+                        type: object
+                      defaultRequest:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: DefaultRequest applies default requests to containers
+                          that omit them.
+                        type: object
+                      max:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: Max defines upper bounds for container resources.
+                        type: object
+                      min:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: Min defines lower bounds for container resources.
+                        type: object
+                    type: object
+                  networkPolicy:
+                    description: NetworkPolicy requests creation of a NetworkPolicy
+                      around the cell workloads.
+                    properties:
+                      allowedNamespaceLabels:
+                        additionalProperties:
+                          type: string
+                        description: AllowedNamespaceLabels selects external namespaces
+                          that may reach the cell workloads.
+                        type: object
+                      enabled:
+                        description: Enabled controls whether the operator should
+                          manage a NetworkPolicy for the cell.
+                        type: boolean
+                    type: object
+                  resourceQuota:
+                    description: ResourceQuota requests creation of a ResourceQuota
+                      in the cell namespace.
+                    properties:
+                      hard:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: Hard lists the enforced quota limits.
+                        type: object
+                    type: object
+                type: object
               serviceAnnotations:
                 additionalProperties:
                   type: string
@@ -105,6 +182,14 @@ spec:
                   type: string
                 description: ServiceLabels are merged into the managed Service labels.
                 type: object
+              state:
+                description: State declares whether the cell should accept traffic,
+                  drain, or stay disabled.
+                enum:
+                - Active
+                - Draining
+                - Disabled
+                type: string
               tearDownOnDelete:
                 description: |-
                   TearDownOnDelete controls whether the operator should delete the managed namespace
@@ -120,8 +205,13 @@ spec:
             - entrypoint
             type: object
           status:
-            description: status defines the observed state of Cell
+            description: Status defines the observed state of Cell.
             properties:
+              availableEndpoints:
+                description: AvailableEndpoints reports how many ready endpoints currently
+                  back the entrypoint Service.
+                format: int32
+                type: integer
               conditions:
                 description: Conditions represent the current state of the Cell resource.
                 items:
@@ -194,6 +284,10 @@ spec:
                 description: ObservedGeneration tracks the last reconciled generation.
                 format: int64
                 type: integer
+              operationalState:
+                description: OperationalState echoes the lifecycle state currently
+                  enforced by the operator.
+                type: string
             type: object
         required:
         - spec

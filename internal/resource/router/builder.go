@@ -1,6 +1,8 @@
 package router
 
 import (
+	"fmt"
+	"hash/fnv"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,11 +20,14 @@ type BackendTarget struct {
 	Name      string
 	Port      int32
 	Weight    *int32
+	CellRef   string
 }
 
 // ReferenceGrantName returns the managed ReferenceGrant name for a route backend.
-func ReferenceGrantName(routeName string) string {
-	return routeName + "-backend"
+func ReferenceGrantName(routeName string, backend BackendTarget) string {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(fmt.Sprintf("%s/%s/%s", routeName, backend.Namespace, backend.Name)))
+	return fmt.Sprintf("%s-%08x-backend", routeName, hash.Sum32())
 }
 
 // MutateGatewayNamespace applies labels to the namespace used to host the managed gateway resources.
@@ -69,11 +74,14 @@ func MutateGateway(gw *gatewayv1.Gateway, router *cellv1alpha1.CellRouter) {
 }
 
 // MutateReferenceGrant applies the desired state for a backend ReferenceGrant.
-func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1alpha1.CellRouter, spec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backend BackendTarget) {
+func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1alpha1.CellRouter, routeName, cellRef, gatewayNamespace string, backend BackendTarget) {
 	grant.Labels = metadata.Merge(grant.Labels, map[string]string{
 		constants.ManagedByLabel:  constants.OperatorName,
 		constants.RouterNameLabel: router.Name,
-		constants.CellNameLabel:   spec.CellRef,
+		constants.CellNameLabel:   cellRef,
+	})
+	grant.Annotations = metadata.Merge(grant.Annotations, map[string]string{
+		"cellrouter.io/route-name": routeName,
 	})
 
 	grant.Spec = gatewayv1beta1.ReferenceGrantSpec{
@@ -97,12 +105,16 @@ func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1al
 }
 
 // MutateHTTPRoute applies the desired state for an HTTPRoute resource.
-func MutateHTTPRoute(route *gatewayv1.HTTPRoute, router *cellv1alpha1.CellRouter, spec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backend BackendTarget) {
-	route.Labels = metadata.Merge(route.Labels, map[string]string{
+func MutateHTTPRoute(route *gatewayv1.HTTPRoute, router *cellv1alpha1.CellRouter, spec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backends []BackendTarget, placementName string) {
+	labels := map[string]string{
 		constants.ManagedByLabel:  constants.OperatorName,
 		constants.RouterNameLabel: router.Name,
 		constants.CellNameLabel:   spec.CellRef,
-	})
+	}
+	if placementName != "" {
+		labels[constants.PlacementNameLabel] = placementName
+	}
+	route.Labels = metadata.Merge(route.Labels, labels)
 
 	parentRefs := make([]gatewayv1.ParentReference, 0, len(spec.ListenerNames))
 	if len(spec.ListenerNames) == 0 {
@@ -125,22 +137,24 @@ func MutateHTTPRoute(route *gatewayv1.HTTPRoute, router *cellv1alpha1.CellRouter
 
 	matches := buildMatches(spec)
 
-	backendRef := gatewayv1.BackendObjectReference{
-		Name:      gatewayv1.ObjectName(backend.Name),
-		Namespace: pointerTo(gatewayv1.Namespace(backend.Namespace)),
-		Port:      pointerTo(gatewayv1.PortNumber(backend.Port)),
+	backendRefs := make([]gatewayv1.HTTPBackendRef, 0, len(backends))
+	for _, backend := range backends {
+		backendRef := gatewayv1.BackendObjectReference{
+			Name:      gatewayv1.ObjectName(backend.Name),
+			Namespace: pointerTo(gatewayv1.Namespace(backend.Namespace)),
+			Port:      pointerTo(gatewayv1.PortNumber(backend.Port)),
+		}
+		backendRefs = append(backendRefs, gatewayv1.HTTPBackendRef{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: backendRef,
+				Weight:                 backend.Weight,
+			},
+		})
 	}
 
 	rule := gatewayv1.HTTPRouteRule{
-		Matches: matches,
-		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{
-				BackendRef: gatewayv1.BackendRef{
-					BackendObjectReference: backendRef,
-					Weight:                 backend.Weight,
-				},
-			},
-		},
+		Matches:     matches,
+		BackendRefs: backendRefs,
 	}
 
 	route.Spec = gatewayv1.HTTPRouteSpec{

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -15,7 +16,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
@@ -31,6 +34,13 @@ const (
 	requeueDelay = 10 * time.Second
 )
 
+type routePlan struct {
+	name         string
+	spec         cellv1alpha1.CellRouteSpec
+	placement    *cellv1alpha1.CellPlacement
+	placementRef string
+}
+
 // CellRouterReconciler reconciles a CellRouter object.
 type CellRouterReconciler struct {
 	client.Client
@@ -42,6 +52,8 @@ type CellRouterReconciler struct {
 // +kubebuilder:rbac:groups=cell.cellrouter.io,resources=cellrouters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cell.cellrouter.io,resources=cellrouters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cell.cellrouter.io,resources=cells,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cell.cellrouter.io,resources=cellplacements,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cell.cellrouter.io,resources=cellplacements/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get
@@ -75,12 +87,8 @@ func (r *CellRouterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.reconcileNormal(ctx, &router, logger)
 }
 
-// reconcileNormal drives the full router lifecycle. A CellRouter is only marked
-// ready when the Gateway API objects exist and every referenced Cell is also
-// ready to receive traffic through its entrypoint Service.
+// reconcileNormal drives the full router lifecycle across static routes and placement-derived routes.
 func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cellv1alpha1.CellRouter, logger logr.Logger) (ctrl.Result, error) {
-	// Patch from a stable copy because conditions are updated incrementally as
-	// each reconciliation phase succeeds or fails.
 	statusBase := router.DeepCopy()
 	gatewayNamespace := router.Spec.Gateway.Namespace
 
@@ -102,7 +110,16 @@ func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cell
 	}
 	r.setRouterCondition(router, cellv1alpha1.CellRouterGatewayReadyCondition, metav1.ConditionTrue, cellv1alpha1.ConditionReasonReconciled, "gateway reconciled")
 
-	routesReady, needsRequeue, managedRoutes, err := r.reconcileRoutes(ctx, router, gatewayNamespace, logger)
+	placements, err := r.listPlacements(ctx, router.Name)
+	if err != nil {
+		logger.Error(err, "failed to list placements")
+		r.setRouterCondition(router, cellv1alpha1.CellRouterRoutesReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonError, err.Error())
+		r.setRouterCondition(router, cellv1alpha1.CellRouterReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonError, "placement discovery failed")
+		_ = r.patchRouterStatus(ctx, router, statusBase)
+		return ctrl.Result{}, err
+	}
+
+	routesReady, needsRequeue, managedRoutes, err := r.reconcileRoutes(ctx, router, gatewayNamespace, placements, logger)
 	if err != nil {
 		logger.Error(err, "failed to reconcile routes")
 		r.setRouterCondition(router, cellv1alpha1.CellRouterRoutesReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonError, err.Error())
@@ -119,8 +136,8 @@ func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cell
 		r.setRouterCondition(router, cellv1alpha1.CellRouterRoutesReadyCondition, metav1.ConditionTrue, cellv1alpha1.ConditionReasonReconciled, "routes reconciled")
 		r.setRouterCondition(router, cellv1alpha1.CellRouterReadyCondition, metav1.ConditionTrue, cellv1alpha1.ConditionReasonReconciled, "router is ready")
 	} else {
-		r.setRouterCondition(router, cellv1alpha1.CellRouterRoutesReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonProgressing, "waiting for routes to become ready")
-		r.setRouterCondition(router, cellv1alpha1.CellRouterReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonProgressing, "router is waiting for routes to become ready")
+		r.setRouterCondition(router, cellv1alpha1.CellRouterRoutesReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonProgressing, "waiting for all routes to become traffic-ready")
+		r.setRouterCondition(router, cellv1alpha1.CellRouterReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonProgressing, "router is waiting for all routes to become traffic-ready")
 	}
 
 	if err := r.patchRouterStatus(ctx, router, statusBase); err != nil {
@@ -135,8 +152,7 @@ func (r *CellRouterReconciler) reconcileNormal(ctx context.Context, router *cell
 	return ctrl.Result{}, nil
 }
 
-// reconcileDeletion tears down resources in dependency order so routes and
-// grants disappear before the front-door Gateway reference is removed.
+// reconcileDeletion tears down resources in dependency order so routes and grants disappear first.
 func (r *CellRouterReconciler) reconcileDeletion(ctx context.Context, router *cellv1alpha1.CellRouter, logger logr.Logger) (ctrl.Result, error) {
 	gatewayNamespace := router.Spec.Gateway.Namespace
 
@@ -166,7 +182,6 @@ func (r *CellRouterReconciler) reconcileDeletion(ctx context.Context, router *ce
 	return ctrl.Result{}, nil
 }
 
-// ensureFinalizer makes sure the CellRouter finalizer is present before reconciliation continues.
 func (r *CellRouterReconciler) ensureFinalizer(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	if controllerutil.ContainsFinalizer(router, constants.FinalizerCellRouter) {
 		return nil
@@ -177,9 +192,6 @@ func (r *CellRouterReconciler) ensureFinalizer(ctx context.Context, router *cell
 	return r.Patch(ctx, router, patch)
 }
 
-// reconcileGatewayNamespace creates or updates the namespace that hosts the
-// managed Gateway. Labels are used for ownership tracking because namespaces
-// cannot be owned through namespaced owner references.
 func (r *CellRouterReconciler) reconcileGatewayNamespace(ctx context.Context, router *cellv1alpha1.CellRouter, namespace string) error {
 	if namespace == "" {
 		return fmt.Errorf("gateway namespace is required")
@@ -196,8 +208,6 @@ func (r *CellRouterReconciler) reconcileGatewayNamespace(ctx context.Context, ro
 	return err
 }
 
-// reconcileGateway creates or updates the single Gateway that fronts all routes
-// declared by the CellRouter.
 func (r *CellRouterReconciler) reconcileGateway(ctx context.Context, router *cellv1alpha1.CellRouter) (string, error) {
 	gateway := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{
 		Name:      router.Spec.Gateway.Name,
@@ -219,48 +229,61 @@ func (r *CellRouterReconciler) reconcileGateway(ctx context.Context, router *cel
 	return fmt.Sprintf("%s/%s", gateway.Namespace, gateway.Name), nil
 }
 
-// reconcileRoutes materializes each route spec into both an HTTPRoute and the
-// ReferenceGrant needed for cross-namespace backend references.
-func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, logger logr.Logger) (allReady bool, needsRequeue bool, statuses []cellv1alpha1.ManagedRouteStatus, err error) {
-	// Track the desired object names so the reconcile can garbage-collect any
-	// stale routes or grants left behind by previous specs.
-	expected := make(map[string]struct{}, len(router.Spec.Routes))
-	expectedGrants := make(map[string]struct{}, len(router.Spec.Routes))
-	statuses = make([]cellv1alpha1.ManagedRouteStatus, 0, len(router.Spec.Routes))
+func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, placements []cellv1alpha1.CellPlacement, logger logr.Logger) (allReady bool, needsRequeue bool, statuses []cellv1alpha1.ManagedRouteStatus, err error) {
+	plans, err := buildRoutePlans(router, placements)
+	if err != nil {
+		return false, false, nil, err
+	}
+
+	expectedRoutes := make(map[string]struct{}, len(plans))
+	expectedGrants := map[string]struct{}{}
+	statuses = make([]cellv1alpha1.ManagedRouteStatus, 0, len(plans))
 	allReady = true
-	needsRequeue = false
 
-	for _, routeSpec := range router.Spec.Routes {
-		expected[routeSpec.Name] = struct{}{}
-		expectedGrants[routerresource.ReferenceGrantName(routeSpec.Name)] = struct{}{}
+	for _, plan := range plans {
+		backends, backendRefs, reason, routeNeedsRequeue, resolveErr := r.resolveRouteBackends(ctx, plan)
+		if resolveErr != nil {
+			return false, true, statuses, resolveErr
+		}
 
-		cell := &cellv1alpha1.Cell{}
-		if err := r.Get(ctx, types.NamespacedName{Name: routeSpec.CellRef}, cell); err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, true, statuses, fmt.Errorf("referenced cell %q not found", routeSpec.CellRef)
+		routeStatus := cellv1alpha1.ManagedRouteStatus{
+			Name:          plan.name,
+			ListenerNames: plan.spec.ListenerNames,
+			CellRef:       plan.spec.CellRef,
+			BackendRefs:   backendRefs,
+			PlacementRef:  plan.placementRef,
+			Reason:        reason,
+		}
+
+		if plan.placement != nil {
+			if err := r.patchPlacementReadiness(ctx, plan.placement, backendRefs, reason, len(backends) > 0); err != nil {
+				return false, true, statuses, err
 			}
-			return false, true, statuses, err
 		}
 
-		backend, backendErr := r.resolveBackend(cell)
-		if backendErr != nil {
-			return false, true, statuses, fmt.Errorf("failed to resolve backend for cell %q: %w", routeSpec.CellRef, backendErr)
+		if len(backends) == 0 {
+			allReady = false
+			needsRequeue = needsRequeue || routeNeedsRequeue
+			statuses = append(statuses, routeStatus)
+			logger.Info("route has no traffic-ready backends", "route", plan.name, "reason", reason)
+			continue
 		}
-		// Weight belongs to the route declaration, so copy it into the backend
-		// descriptor consumed by the HTTPRoute builder.
-		backend.Weight = routeSpec.Weight
 
-		if err := r.reconcileReferenceGrant(ctx, router, routeSpec, gatewayNamespace, backend); err != nil {
-			return false, true, statuses, err
+		expectedRoutes[plan.name] = struct{}{}
+		for _, backend := range backends {
+			expectedGrants[routerresource.ReferenceGrantName(plan.name, backend)] = struct{}{}
+			if err := r.reconcileReferenceGrant(ctx, router, plan.name, gatewayNamespace, backend); err != nil {
+				return false, true, statuses, err
+			}
 		}
 
 		httpRoute := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{
-			Name:      routeSpec.Name,
+			Name:      plan.name,
 			Namespace: gatewayNamespace,
 		}}
 
 		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, httpRoute, func() error {
-			routerresource.MutateHTTPRoute(httpRoute, router, routeSpec, gatewayNamespace, backend)
+			routerresource.MutateHTTPRoute(httpRoute, router, plan.spec, gatewayNamespace, backends, plan.placementRef)
 			return controllerutil.SetControllerReference(router, httpRoute, r.Scheme)
 		})
 		if err != nil {
@@ -276,20 +299,6 @@ func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cell
 			allReady = false
 			needsRequeue = true
 		}
-
-		// Gateway acceptance alone is not enough: the Cell controller must also
-		// have published a ready entrypoint before this router is considered ready.
-		if cellCond := apimeta.FindStatusCondition(cell.Status.Conditions, cellv1alpha1.CellReadyCondition); cellCond == nil || cellCond.Status != metav1.ConditionTrue {
-			allReady = false
-			needsRequeue = true
-			logger.Info("referenced cell is not ready yet", "cell", cell.Name)
-		}
-
-		routeStatus := cellv1alpha1.ManagedRouteStatus{
-			Name:          routeSpec.Name,
-			ListenerNames: routeSpec.ListenerNames,
-			CellRef:       routeSpec.CellRef,
-		}
 		if readyTime != nil {
 			copy := *readyTime
 			routeStatus.LastTransitionTime = &copy
@@ -297,7 +306,7 @@ func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cell
 		statuses = append(statuses, routeStatus)
 	}
 
-	if err := r.cleanupStaleRoutes(ctx, router, gatewayNamespace, expected); err != nil {
+	if err := r.cleanupStaleRoutes(ctx, router, gatewayNamespace, expectedRoutes); err != nil {
 		return false, true, statuses, err
 	}
 
@@ -308,9 +317,176 @@ func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cell
 	return allReady, needsRequeue, statuses, nil
 }
 
-// isRouteReady relies on Accepted and, when exposed by the implementation,
-// ResolvedRefs. It intentionally avoids using Programmed because local Gateway
-// implementations do not report that condition consistently.
+func buildRoutePlans(router *cellv1alpha1.CellRouter, placements []cellv1alpha1.CellPlacement) ([]routePlan, error) {
+	plans := make([]routePlan, 0, len(router.Spec.Routes)+len(placements))
+	seenNames := map[string]struct{}{}
+
+	for _, routeSpec := range router.Spec.Routes {
+		if _, exists := seenNames[routeSpec.Name]; exists {
+			return nil, fmt.Errorf("duplicate route name %q", routeSpec.Name)
+		}
+		seenNames[routeSpec.Name] = struct{}{}
+		plans = append(plans, routePlan{name: routeSpec.Name, spec: routeSpec})
+	}
+
+	for idx := range placements {
+		placement := placements[idx]
+		if _, exists := seenNames[placement.Name]; exists {
+			return nil, fmt.Errorf("placement %q conflicts with an existing route name", placement.Name)
+		}
+		spec := routeSpecFromPlacement(&placement)
+		seenNames[placement.Name] = struct{}{}
+		plans = append(plans, routePlan{
+			name:         placement.Name,
+			spec:         spec,
+			placement:    &placement,
+			placementRef: placement.Name,
+		})
+	}
+
+	return plans, nil
+}
+
+func routeSpecFromPlacement(placement *cellv1alpha1.CellPlacement) cellv1alpha1.CellRouteSpec {
+	spec := cellv1alpha1.CellRouteSpec{
+		Name:              placement.Name,
+		ListenerNames:     placement.Spec.ListenerNames,
+		Hostnames:         placement.Spec.Hostnames,
+		PathMatch:         placement.Spec.PathMatch,
+		HeaderMatches:     placement.Spec.HeaderMatches,
+		QueryParamMatches: placement.Spec.QueryParamMatches,
+	}
+
+	if len(placement.Spec.Destinations) > 0 {
+		spec.CellRef = placement.Spec.Destinations[0].CellRef
+		spec.Weight = placement.Spec.Destinations[0].Weight
+		if len(placement.Spec.Destinations) > 1 {
+			spec.AdditionalBackends = append([]cellv1alpha1.CellRouteBackendRef(nil), placement.Spec.Destinations[1:]...)
+		}
+	}
+
+	return spec
+}
+
+func (r *CellRouterReconciler) listPlacements(ctx context.Context, routerName string) ([]cellv1alpha1.CellPlacement, error) {
+	var list cellv1alpha1.CellPlacementList
+	if err := r.List(ctx, &list); err != nil {
+		return nil, err
+	}
+
+	placements := make([]cellv1alpha1.CellPlacement, 0, len(list.Items))
+	for idx := range list.Items {
+		placement := list.Items[idx]
+		if placement.Spec.RouterRef == routerName {
+			placements = append(placements, placement)
+		}
+	}
+
+	return placements, nil
+}
+
+func (r *CellRouterReconciler) resolveRouteBackends(ctx context.Context, plan routePlan) ([]routerresource.BackendTarget, []string, string, bool, error) {
+	candidates := make([]cellv1alpha1.CellRouteBackendRef, 0, 1+len(plan.spec.AdditionalBackends))
+	if plan.spec.CellRef != "" {
+		candidates = append(candidates, cellv1alpha1.CellRouteBackendRef{
+			CellRef: plan.spec.CellRef,
+			Weight:  plan.spec.Weight,
+		})
+	}
+	candidates = append(candidates, plan.spec.AdditionalBackends...)
+
+	backends, backendRefs, issues, err := r.resolveBackendCandidates(ctx, candidates)
+	if err != nil {
+		return nil, nil, "", true, err
+	}
+	if len(backends) > 0 {
+		reason := "traffic-ready"
+		if len(issues) > 0 {
+			reason = "degraded: " + strings.Join(issues, "; ")
+		}
+		return backends, backendRefs, reason, false, nil
+	}
+
+	if plan.spec.FallbackBackend != nil {
+		fallbackBackends, fallbackRefs, fallbackIssues, err := r.resolveBackendCandidates(ctx, []cellv1alpha1.CellRouteBackendRef{*plan.spec.FallbackBackend})
+		if err != nil {
+			return nil, nil, "", true, err
+		}
+		if len(fallbackBackends) > 0 {
+			return fallbackBackends, fallbackRefs, "using fallback backend", false, nil
+		}
+		issues = append(issues, fallbackIssues...)
+	}
+
+	reason := "waiting for traffic-ready backends"
+	if len(issues) > 0 {
+		reason = strings.Join(issues, "; ")
+	}
+	return nil, nil, reason, true, nil
+}
+
+func (r *CellRouterReconciler) resolveBackendCandidates(ctx context.Context, refs []cellv1alpha1.CellRouteBackendRef) ([]routerresource.BackendTarget, []string, []string, error) {
+	backends := make([]routerresource.BackendTarget, 0, len(refs))
+	backendRefs := make([]string, 0, len(refs))
+	issues := make([]string, 0)
+
+	for _, ref := range refs {
+		cell := &cellv1alpha1.Cell{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.CellRef}, cell); err != nil {
+			if apierrors.IsNotFound(err) {
+				issues = append(issues, fmt.Sprintf("cell %q not found", ref.CellRef))
+				continue
+			}
+			return nil, nil, nil, err
+		}
+
+		if ready, reason := isCellTrafficReady(cell); !ready {
+			issues = append(issues, fmt.Sprintf("cell %q is not traffic-ready: %s", ref.CellRef, reason))
+			continue
+		}
+
+		backend, err := r.resolveBackend(cell)
+		if err != nil {
+			issues = append(issues, fmt.Sprintf("failed to resolve backend for cell %q: %v", ref.CellRef, err))
+			continue
+		}
+		backend.Weight = ref.Weight
+		backend.CellRef = ref.CellRef
+		backends = append(backends, backend)
+		backendRefs = append(backendRefs, ref.CellRef)
+	}
+
+	return backends, backendRefs, issues, nil
+}
+
+func isCellTrafficReady(cell *cellv1alpha1.Cell) (bool, string) {
+	switch effectiveCellState(cell) {
+	case cellv1alpha1.CellStateDisabled:
+		return false, "disabled"
+	case cellv1alpha1.CellStateDraining:
+		return false, "draining"
+	}
+
+	backendCondition := apimeta.FindStatusCondition(cell.Status.Conditions, cellv1alpha1.CellBackendReadyCondition)
+	if backendCondition == nil || backendCondition.Status != metav1.ConditionTrue {
+		if backendCondition != nil && backendCondition.Message != "" {
+			return false, backendCondition.Message
+		}
+		return false, "backend condition is not ready"
+	}
+
+	readyCondition := apimeta.FindStatusCondition(cell.Status.Conditions, cellv1alpha1.CellReadyCondition)
+	if readyCondition == nil || readyCondition.Status != metav1.ConditionTrue {
+		if readyCondition != nil && readyCondition.Message != "" {
+			return false, readyCondition.Message
+		}
+		return false, "cell condition is not ready"
+	}
+
+	return true, "ready"
+}
+
+// isRouteReady relies on Accepted and, when exposed by the implementation, ResolvedRefs.
 func isRouteReady(httpRoute *gatewayv1.HTTPRoute, gatewayName, gatewayNamespace string) (bool, *metav1.Time) {
 	for _, parent := range httpRoute.Status.Parents {
 		if string(parent.ParentRef.Name) != gatewayName {
@@ -352,16 +528,14 @@ func isRouteReady(httpRoute *gatewayv1.HTTPRoute, gatewayName, gatewayNamespace 
 	return false, nil
 }
 
-// reconcileReferenceGrant creates or updates the explicit permission that lets
-// an HTTPRoute in the gateway namespace target a Service in a Cell namespace.
-func (r *CellRouterReconciler) reconcileReferenceGrant(ctx context.Context, router *cellv1alpha1.CellRouter, routeSpec cellv1alpha1.CellRouteSpec, gatewayNamespace string, backend routerresource.BackendTarget) error {
+func (r *CellRouterReconciler) reconcileReferenceGrant(ctx context.Context, router *cellv1alpha1.CellRouter, routeName, gatewayNamespace string, backend routerresource.BackendTarget) error {
 	grant := &gatewayv1beta1.ReferenceGrant{ObjectMeta: metav1.ObjectMeta{
-		Name:      routerresource.ReferenceGrantName(routeSpec.Name),
+		Name:      routerresource.ReferenceGrantName(routeName, backend),
 		Namespace: backend.Namespace,
 	}}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, grant, func() error {
-		routerresource.MutateReferenceGrant(grant, router, routeSpec, gatewayNamespace, backend)
+		routerresource.MutateReferenceGrant(grant, router, routeName, backend.CellRef, gatewayNamespace, backend)
 		return controllerutil.SetControllerReference(router, grant, r.Scheme)
 	})
 	if err == nil && r.Recorder != nil {
@@ -370,8 +544,6 @@ func (r *CellRouterReconciler) reconcileReferenceGrant(ctx context.Context, rout
 	return err
 }
 
-// cleanupStaleRoutes keeps the cluster declarative by deleting previously
-// managed routes that no longer appear in the current spec.
 func (r *CellRouterReconciler) cleanupStaleRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, expected map[string]struct{}) error {
 	var existing gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &existing,
@@ -398,7 +570,6 @@ func (r *CellRouterReconciler) cleanupStaleRoutes(ctx context.Context, router *c
 	return nil
 }
 
-// cleanupStaleReferenceGrants mirrors stale route cleanup for permission grants.
 func (r *CellRouterReconciler) cleanupStaleReferenceGrants(ctx context.Context, router *cellv1alpha1.CellRouter, expected map[string]struct{}) error {
 	var existing gatewayv1beta1.ReferenceGrantList
 	if err := r.List(ctx, &existing,
@@ -424,11 +595,7 @@ func (r *CellRouterReconciler) cleanupStaleReferenceGrants(ctx context.Context, 
 	return nil
 }
 
-// resolveBackend derives the backend directly from the Cell API contract rather
-// than querying the Service, which keeps CellRouter reconciliation deterministic.
 func (r *CellRouterReconciler) resolveBackend(cell *cellv1alpha1.Cell) (routerresource.BackendTarget, error) {
-	// Prefer status because it reflects the final reconciled namespace, but fall
-	// back to spec-based defaulting so newly created Cells can still be routed.
 	namespace := cell.Status.Namespace
 	if namespace == "" {
 		namespace = effectiveNamespace(cell)
@@ -453,8 +620,6 @@ func (r *CellRouterReconciler) resolveBackend(cell *cellv1alpha1.Cell) (routerre
 	}, nil
 }
 
-// deleteManagedHTTPRoutes removes only owned routes so labels are used for
-// discovery, not as the sole authorization to delete an object.
 func (r *CellRouterReconciler) deleteManagedHTTPRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, namespace string) error {
 	var routes gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &routes,
@@ -480,8 +645,6 @@ func (r *CellRouterReconciler) deleteManagedHTTPRoutes(ctx context.Context, rout
 	return nil
 }
 
-// deleteManagedGateway removes the Gateway only when the CellRouter owns it,
-// protecting shared or preexisting Gateways from accidental deletion.
 func (r *CellRouterReconciler) deleteManagedGateway(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	gateway := &gatewayv1.Gateway{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -502,8 +665,6 @@ func (r *CellRouterReconciler) deleteManagedGateway(ctx context.Context, router 
 	return client.IgnoreNotFound(r.Delete(ctx, gateway))
 }
 
-// deleteManagedReferenceGrants applies the same ownership guard as route
-// deletion so unrelated grants that happen to share labels are left untouched.
 func (r *CellRouterReconciler) deleteManagedReferenceGrants(ctx context.Context, router *cellv1alpha1.CellRouter) error {
 	var grants gatewayv1beta1.ReferenceGrantList
 	if err := r.List(ctx, &grants,
@@ -528,12 +689,10 @@ func (r *CellRouterReconciler) deleteManagedReferenceGrants(ctx context.Context,
 	return nil
 }
 
-// patchRouterStatus patches only the CellRouter status subresource against the provided base copy.
 func (r *CellRouterReconciler) patchRouterStatus(ctx context.Context, router *cellv1alpha1.CellRouter, base *cellv1alpha1.CellRouter) error {
 	return r.Status().Patch(ctx, router, client.MergeFrom(base))
 }
 
-// setRouterCondition upserts a status condition on the CellRouter.
 func (r *CellRouterReconciler) setRouterCondition(router *cellv1alpha1.CellRouter, condType string, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(&router.Status.Conditions, metav1.Condition{
 		Type:               condType,
@@ -544,6 +703,51 @@ func (r *CellRouterReconciler) setRouterCondition(router *cellv1alpha1.CellRoute
 	})
 }
 
+func (r *CellRouterReconciler) patchPlacementReadiness(ctx context.Context, placement *cellv1alpha1.CellPlacement, resolvedBackends []string, reason string, ready bool) error {
+	base := placement.DeepCopy()
+	placement.Status.ObservedGeneration = placement.Generation
+	placement.Status.ResolvedBackends = resolvedBackends
+
+	conditionStatus := metav1.ConditionFalse
+	conditionReason := cellv1alpha1.ConditionReasonProgressing
+	if ready {
+		conditionStatus = metav1.ConditionTrue
+		conditionReason = cellv1alpha1.ConditionReasonReconciled
+	}
+
+	apimeta.SetStatusCondition(&placement.Status.Conditions, metav1.Condition{
+		Type:               cellv1alpha1.CellPlacementReadyCondition,
+		Status:             conditionStatus,
+		Reason:             conditionReason,
+		Message:            reason,
+		ObservedGeneration: placement.Generation,
+	})
+
+	return r.Status().Patch(ctx, placement, client.MergeFrom(base))
+}
+
+func (r *CellRouterReconciler) requestsForCell(ctx context.Context, _ client.Object) []reconcile.Request {
+	var routers cellv1alpha1.CellRouterList
+	if err := r.List(ctx, &routers); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(routers.Items))
+	for idx := range routers.Items {
+		router := routers.Items[idx]
+		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: router.Name}})
+	}
+	return requests
+}
+
+func (r *CellRouterReconciler) requestsForPlacement(_ context.Context, obj client.Object) []reconcile.Request {
+	placement, ok := obj.(*cellv1alpha1.CellPlacement)
+	if !ok || placement.Spec.RouterRef == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: placement.Spec.RouterRef}}}
+}
+
 // SetupWithManager wires the controller to the manager.
 func (r *CellRouterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -551,6 +755,8 @@ func (r *CellRouterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.Gateway{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Owns(&gatewayv1beta1.ReferenceGrant{}).
+		Watches(&cellv1alpha1.Cell{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCell)).
+		Watches(&cellv1alpha1.CellPlacement{}, handler.EnqueueRequestsFromMapFunc(r.requestsForPlacement)).
 		Named("cellrouter").
 		Complete(r)
 }

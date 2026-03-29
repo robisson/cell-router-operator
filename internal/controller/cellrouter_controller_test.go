@@ -19,6 +19,7 @@ import (
 
 	cellv1alpha1 "github.com/robisson/cell-router-operator/api/v1alpha1"
 	"github.com/robisson/cell-router-operator/internal/constants"
+	routerresource "github.com/robisson/cell-router-operator/internal/resource/router"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -51,6 +52,7 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(gatewayv1beta1.AddToScheme(scheme)).To(Succeed())
 
 		readyCondition := metav1.Condition{Type: cellv1alpha1.CellReadyCondition, Status: metav1.ConditionTrue, LastTransitionTime: metav1.Now()}
+		backendCondition := metav1.Condition{Type: cellv1alpha1.CellBackendReadyCondition, Status: metav1.ConditionTrue, LastTransitionTime: metav1.Now()}
 		baseCell = &cellv1alpha1.Cell{
 			ObjectMeta: metav1.ObjectMeta{Name: cellName},
 			Spec: cellv1alpha1.CellSpec{
@@ -62,7 +64,9 @@ var _ = Describe("CellRouter Controller", func() {
 			Status: cellv1alpha1.CellStatus{
 				Namespace:          cellName,
 				EntrypointService:  cellName + "/entry",
-				Conditions:         []metav1.Condition{readyCondition},
+				OperationalState:   cellv1alpha1.CellStateActive,
+				AvailableEndpoints: 1,
+				Conditions:         []metav1.Condition{readyCondition, backendCondition},
 				ObservedGeneration: 1,
 			},
 		}
@@ -105,7 +109,7 @@ var _ = Describe("CellRouter Controller", func() {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(baseCell.DeepCopy(), baseRouter.DeepCopy(), baseStaleRoute.DeepCopy()).
-			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &cellv1alpha1.CellPlacement{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
 			Build()
 		reconciler := &CellRouterReconciler{
 			Client:   fakeClient,
@@ -127,7 +131,7 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(namespace.Labels[constants.RouterNameLabel]).To(Equal(routerName))
 
 		grant := &gatewayv1beta1.ReferenceGrant{}
-		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeName + "-backend"}, grant)).To(Succeed())
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeGrantName(routeName, cellName, "entry")}, grant)).To(Succeed())
 		Expect(grant.Spec.From).To(HaveLen(1))
 
 		httpRoute := &gatewayv1.HTTPRoute{}
@@ -186,7 +190,7 @@ var _ = Describe("CellRouter Controller", func() {
 		dyingRouter.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 		grant := &gatewayv1beta1.ReferenceGrant{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      routeName + "-backend",
+				Name:      routeGrantName(routeName, cellName, "entry"),
 				Namespace: cellName,
 				Labels: map[string]string{
 					constants.ManagedByLabel:  constants.OperatorName,
@@ -199,7 +203,7 @@ var _ = Describe("CellRouter Controller", func() {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(baseCell.DeepCopy(), dyingRouter, baseStaleRoute.DeepCopy(), grant).
-			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &cellv1alpha1.CellPlacement{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
 			Build()
 		reconciler := &CellRouterReconciler{
 			Client:   fakeClient,
@@ -219,7 +223,7 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		grantCheck := &gatewayv1beta1.ReferenceGrant{}
-		err = fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeName + "-backend"}, grantCheck)
+		err = fakeClient.Get(ctx, types.NamespacedName{Namespace: cellName, Name: routeGrantName(routeName, cellName, "entry")}, grantCheck)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		routerCheck := &cellv1alpha1.CellRouter{}
@@ -262,6 +266,87 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: routeName}, &gatewayv1.HTTPRoute{})).To(Succeed())
 	})
 
+	It("materializes placement routes and patches placement status", func() {
+		placement := &cellv1alpha1.CellPlacement{
+			ObjectMeta: metav1.ObjectMeta{Name: "premium-placement"},
+			Spec: cellv1alpha1.CellPlacementSpec{
+				RouterRef:     routerName,
+				ListenerNames: []string{"http"},
+				Hostnames:     []gatewayv1.Hostname{"api.example.com"},
+				HeaderMatches: []cellv1alpha1.HTTPHeaderMatch{{Name: "X-Tenant", Value: "premium"}},
+				Destinations:  []cellv1alpha1.CellRouteBackendRef{{CellRef: cellName}},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(baseCell.DeepCopy(), baseRouter.DeepCopy(), placement).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &cellv1alpha1.CellPlacement{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
+			Build()
+
+		reconciler := &CellRouterReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(64)}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: routerName}})
+		Expect(err).NotTo(HaveOccurred())
+
+		httpRoute := &gatewayv1.HTTPRoute{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: "premium-placement"}, httpRoute)).To(Succeed())
+		Expect(httpRoute.Labels[constants.PlacementNameLabel]).To(Equal("premium-placement"))
+
+		updatedPlacement := &cellv1alpha1.CellPlacement{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "premium-placement"}, updatedPlacement)).To(Succeed())
+		condition := apimeta.FindStatusCondition(updatedPlacement.Status.Conditions, cellv1alpha1.CellPlacementReadyCondition)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	It("uses fallback backends when the primary cell is draining", func() {
+		drainingCell := &cellv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{Name: "payments-canary"},
+			Spec: cellv1alpha1.CellSpec{
+				State: cellv1alpha1.CellStateDraining,
+				Entrypoint: cellv1alpha1.CellEntrypointSpec{
+					ServiceName: "canary-entry",
+					Port:        8080,
+				},
+			},
+			Status: cellv1alpha1.CellStatus{
+				Namespace:          "payments-canary",
+				EntrypointService:  "payments-canary/canary-entry",
+				OperationalState:   cellv1alpha1.CellStateDraining,
+				AvailableEndpoints: 1,
+				Conditions: []metav1.Condition{
+					{Type: cellv1alpha1.CellBackendReadyCondition, Status: metav1.ConditionTrue, LastTransitionTime: metav1.Now()},
+					{Type: cellv1alpha1.CellReadyCondition, Status: metav1.ConditionFalse, LastTransitionTime: metav1.Now()},
+				},
+			},
+		}
+		router := baseRouter.DeepCopy()
+		router.Spec.Routes = []cellv1alpha1.CellRouteSpec{{
+			Name:    "beta-route",
+			CellRef: "payments-canary",
+			FallbackBackend: &cellv1alpha1.CellRouteBackendRef{
+				CellRef: cellName,
+			},
+			Hostnames: []gatewayv1.Hostname{"beta.example.com"},
+		}}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(baseCell.DeepCopy(), drainingCell, router).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &cellv1alpha1.CellPlacement{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
+			Build()
+
+		reconciler := &CellRouterReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(64)}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: routerName}})
+		Expect(err).NotTo(HaveOccurred())
+
+		httpRoute := &gatewayv1.HTTPRoute{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: "beta-route"}, httpRoute)).To(Succeed())
+		Expect(httpRoute.Spec.Rules).To(HaveLen(1))
+		Expect(httpRoute.Spec.Rules[0].BackendRefs).To(HaveLen(1))
+		Expect(string(httpRoute.Spec.Rules[0].BackendRefs[0].Name)).To(Equal("entry"))
+	})
+
 	It("treats routes with unresolved backend references as not ready", func() {
 		controllerName := gatewayv1.GatewayController("cellrouter.io/controller")
 		namespace := gatewayv1.Namespace(gatewayNS)
@@ -299,3 +384,7 @@ var _ = Describe("CellRouter Controller", func() {
 		Expect(readyTime).To(BeNil())
 	})
 })
+
+func routeGrantName(routeName, namespace, service string) string {
+	return routerresource.ReferenceGrantName(routeName, routerresource.BackendTarget{Name: service, Namespace: namespace})
+}

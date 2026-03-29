@@ -26,6 +26,9 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Validate samples render
+        run: kubectl kustomize config/samples >/dev/null
+
       - name: Running Test e2e
         run: |
           go mod tidy

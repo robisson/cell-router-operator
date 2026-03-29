@@ -2,5 +2,7 @@
 resources:
 - cell_v1alpha1_cell.yaml
 - cell_v1alpha1_orders_cell.yaml
+- cell_v1alpha1_payments_canary_cell.yaml
 - cell_v1alpha1_cellrouter.yaml
+- cell_v1alpha1_cellplacement.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

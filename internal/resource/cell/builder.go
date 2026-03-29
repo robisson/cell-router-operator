@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	cellv1alpha1 "github.com/robisson/cell-router-operator/api/v1alpha1"
@@ -49,14 +51,8 @@ func MutateService(svc *corev1.Service, cell *cellv1alpha1.Cell) {
 		}
 	}
 
-	if len(cell.Spec.WorkloadSelector) > 0 {
-		for k, v := range cell.Spec.WorkloadSelector {
-			svc.Spec.Selector[k] = v
-		}
-	} else {
-		// The default convention keeps the API lightweight: a workload labeled
-		// with the cell name becomes routable without an explicit selector.
-		svc.Spec.Selector[constants.CellNameLabel] = cell.Name
+	for k, v := range WorkloadSelector(cell) {
+		svc.Spec.Selector[k] = v
 	}
 
 	serviceType := cell.Spec.Entrypoint.Type
@@ -85,4 +81,73 @@ func MutateService(svc *corev1.Service, cell *cellv1alpha1.Cell) {
 			Protocol:   protocol,
 		},
 	}
+}
+
+// MutateResourceQuota applies the desired state for the cell ResourceQuota.
+func MutateResourceQuota(quota *corev1.ResourceQuota, cell *cellv1alpha1.Cell) {
+	quota.Labels = metadata.Merge(quota.Labels, map[string]string{
+		constants.ManagedByLabel: constants.OperatorName,
+		constants.CellNameLabel:  cell.Name,
+	})
+	if cell.Spec.Policies == nil || cell.Spec.Policies.ResourceQuota == nil {
+		quota.Spec.Hard = nil
+		return
+	}
+	quota.Spec.Hard = cell.Spec.Policies.ResourceQuota.Hard.DeepCopy()
+}
+
+// MutateLimitRange applies the desired state for the cell LimitRange.
+func MutateLimitRange(limitRange *corev1.LimitRange, cell *cellv1alpha1.Cell) {
+	limitRange.Labels = metadata.Merge(limitRange.Labels, map[string]string{
+		constants.ManagedByLabel: constants.OperatorName,
+		constants.CellNameLabel:  cell.Name,
+	})
+
+	item := corev1.LimitRangeItem{Type: corev1.LimitTypeContainer}
+	if cell.Spec.Policies != nil && cell.Spec.Policies.LimitRange != nil {
+		item.Default = cell.Spec.Policies.LimitRange.Default.DeepCopy()
+		item.DefaultRequest = cell.Spec.Policies.LimitRange.DefaultRequest.DeepCopy()
+		item.Max = cell.Spec.Policies.LimitRange.Max.DeepCopy()
+		item.Min = cell.Spec.Policies.LimitRange.Min.DeepCopy()
+	}
+	limitRange.Spec.Limits = []corev1.LimitRangeItem{item}
+}
+
+// MutateNetworkPolicy applies the desired ingress policy for the cell workloads.
+func MutateNetworkPolicy(policy *networkingv1.NetworkPolicy, cell *cellv1alpha1.Cell) {
+	selectorLabels := WorkloadSelector(cell)
+
+	policy.Labels = metadata.Merge(policy.Labels, map[string]string{
+		constants.ManagedByLabel: constants.OperatorName,
+		constants.CellNameLabel:  cell.Name,
+	})
+	policy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: selectorLabels}
+	policy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
+
+	peers := []networkingv1.NetworkPolicyPeer{
+		// Keep same-namespace communication available for probes and sidecars.
+		{PodSelector: &metav1.LabelSelector{}},
+	}
+	if cell.Spec.Policies != nil && cell.Spec.Policies.NetworkPolicy != nil && len(cell.Spec.Policies.NetworkPolicy.AllowedNamespaceLabels) > 0 {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: cell.Spec.Policies.NetworkPolicy.AllowedNamespaceLabels},
+		})
+	}
+
+	policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: peers}}
+}
+
+// WorkloadSelector returns the selector applied to the managed Service and policy resources.
+func WorkloadSelector(cell *cellv1alpha1.Cell) map[string]string {
+	if len(cell.Spec.WorkloadSelector) > 0 {
+		selector := make(map[string]string, len(cell.Spec.WorkloadSelector))
+		for k, v := range cell.Spec.WorkloadSelector {
+			selector[k] = v
+		}
+		return selector
+	}
+
+	// The default convention keeps the API lightweight: a workload labeled with
+	// the cell name becomes routable without an explicit selector.
+	return map[string]string{constants.CellNameLabel: cell.Name}
 }

@@ -3,6 +3,7 @@ kind: Cell
 metadata:
   name: payments
 spec:
+  state: Active
   namespaceLabels:
     team: payments
   serviceAnnotations:
@@ -12,4 +13,23 @@ spec:
   entrypoint:
     serviceName: payments-entry
     port: 8080
+  policies:
+    resourceQuota:
+      hard:
+        pods: "10"
+        requests.cpu: "500m"
+        requests.memory: "512Mi"
+        limits.cpu: "1"
+        limits.memory: "1Gi"
+    limitRange:
+      default:
+        cpu: "250m"
+        memory: "256Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+    networkPolicy:
+      enabled: true
+      allowedNamespaceLabels:
+        cellrouter.io/cell-access: "true"
   tearDownOnDelete: true

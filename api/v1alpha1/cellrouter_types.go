@@ -126,6 +126,26 @@ type CellRouteSpec struct {
 	// Weight controls the relative traffic weight towards the cell.
 	// +optional
 	Weight *int32 `json:"weight,omitempty"`
+
+	// AdditionalBackends expands the route into a weighted multi-backend rule.
+	// Each referenced Cell must be traffic-ready before it is included.
+	// +optional
+	AdditionalBackends []CellRouteBackendRef `json:"additionalBackends,omitempty"`
+
+	// FallbackBackend is used when no primary backend for the route is traffic-ready.
+	// +optional
+	FallbackBackend *CellRouteBackendRef `json:"fallbackBackend,omitempty"`
+}
+
+// CellRouteBackendRef points to a Cell and optional weight within a generated HTTPRoute rule.
+type CellRouteBackendRef struct {
+	// CellRef points to the target Cell.
+	// +kubebuilder:validation:MinLength=1
+	CellRef string `json:"cellRef"`
+
+	// Weight controls the relative traffic weight towards the referenced Cell.
+	// +optional
+	Weight *int32 `json:"weight,omitempty"`
 }
 
 // HTTPPathMatch mirrors gateway-api HTTPPathMatch with validation markers.
@@ -180,6 +200,18 @@ type ManagedRouteStatus struct {
 	// CellRef is the cell the route points to.
 	// +optional
 	CellRef string `json:"cellRef,omitempty"`
+
+	// BackendRefs lists the backend cells currently materialized for the route.
+	// +optional
+	BackendRefs []string `json:"backendRefs,omitempty"`
+
+	// PlacementRef identifies the CellPlacement that produced the route when applicable.
+	// +optional
+	PlacementRef string `json:"placementRef,omitempty"`
+
+	// Reason summarizes why the route is ready or waiting.
+	// +optional
+	Reason string `json:"reason,omitempty"`
 
 	// LastTransitionTime is the last time the route condition changed.
 	// +optional

@@ -14,7 +14,9 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - limitranges
   - namespaces
+  - resourcequotas
   - services
   verbs:
   - create
@@ -24,6 +26,24 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - cell.cellrouter.io
+  resources:
+  - cellplacements
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cell.cellrouter.io
+  resources:
+  - cellplacements/status
+  - cellrouters/status
+  - cells/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - cell.cellrouter.io
   resources:
@@ -45,14 +65,13 @@ rules:
   verbs:
   - update
 - apiGroups:
-  - cell.cellrouter.io
+  - discovery.k8s.io
   resources:
-  - cellrouters/status
-  - cells/status
+  - endpointslices
   verbs:
   - get
-  - patch
-  - update
+  - list
+  - watch
 - apiGroups:
   - gateway.networking.k8s.io
   resources:
@@ -74,3 +93,15 @@ rules:
   - httproutes/status
   verbs:
   - get
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

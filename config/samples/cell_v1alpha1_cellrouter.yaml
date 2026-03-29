@@ -16,6 +16,9 @@ spec:
   routes:
     - name: payments-route
       cellRef: payments
+      additionalBackends:
+        - cellRef: payments-canary
+          weight: 20
       listenerNames:
         - http
       hostnames:
@@ -29,7 +32,7 @@ spec:
       queryParamMatches:
         - name: plan
           value: gold
-      weight: 1
+      weight: 80
     - name: orders-route
       cellRef: orders
       listenerNames:
@@ -40,3 +43,15 @@ spec:
         type: PathPrefix
         value: /orders
       weight: 1
+    - name: beta-route
+      cellRef: payments-canary
+      fallbackBackend:
+        cellRef: payments
+        weight: 1
+      listenerNames:
+        - http
+      hostnames:
+        - beta.example.com
+      pathMatch:
+        type: PathPrefix
+        value: /beta

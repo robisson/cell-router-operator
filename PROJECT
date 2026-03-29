@@ -11,7 +11,7 @@ repo: github.com/robisson/cell-router-operator
 resources:
 - api:
     crdVersion: v1
-    namespaced: true
+    namespaced: false
   controller: true
   domain: cellrouter.io
   group: cell
@@ -20,11 +20,20 @@ resources:
   version: v1alpha1
 - api:
     crdVersion: v1
-    namespaced: true
+    namespaced: false
   controller: true
   domain: cellrouter.io
   group: cell
   kind: CellRouter
+  path: github.com/robisson/cell-router-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: false
+  domain: cellrouter.io
+  group: cell
+  kind: CellPlacement
   path: github.com/robisson/cell-router-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

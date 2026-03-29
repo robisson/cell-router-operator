@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-canary-gateway
+  namespace: payments-canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-canary-gateway
+  template:
+    metadata:
+      labels:
+        app: payments-canary-gateway
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0.0
+          args:
+            - -listen=:8080
+            - -text=payments canary backend
+          ports:
+            - containerPort: 8080

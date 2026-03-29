@@ -61,11 +61,10 @@ func TestMutateGatewayNamespace(t *testing.T) {
 
 func TestMutateReferenceGrant(t *testing.T) {
 	router := &cellv1alpha1.CellRouter{ObjectMeta: metav1.ObjectMeta{Name: "global"}}
-	routeSpec := cellv1alpha1.CellRouteSpec{Name: "payments", CellRef: "payments"}
-	backend := BackendTarget{Name: "entry", Namespace: "payments", Port: 8080}
+	backend := BackendTarget{Name: "entry", Namespace: "payments", Port: 8080, CellRef: "payments"}
 	grant := &gatewayv1beta1.ReferenceGrant{}
 
-	MutateReferenceGrant(grant, router, routeSpec, "cell-routing", backend)
+	MutateReferenceGrant(grant, router, "payments", "payments", "cell-routing", backend)
 
 	if len(grant.Spec.From) != 1 {
 		t.Fatalf("expected one reference source")
@@ -98,10 +97,10 @@ func TestMutateHTTPRoute(t *testing.T) {
 		},
 	}
 
-	backend := BackendTarget{Name: "entry", Namespace: "payments", Port: 8080}
+	backend := BackendTarget{Name: "entry", Namespace: "payments", Port: 8080, CellRef: "payments"}
 
 	httpRoute := &gatewayv1.HTTPRoute{}
-	MutateHTTPRoute(httpRoute, router, routeSpec, "cell-routing", backend)
+	MutateHTTPRoute(httpRoute, router, routeSpec, "cell-routing", []BackendTarget{backend}, "")
 
 	if len(httpRoute.Spec.CommonRouteSpec.ParentRefs) != 1 {
 		t.Fatalf("expected one parent ref")
@@ -123,8 +122,9 @@ func TestMutateHTTPRoute(t *testing.T) {
 }
 
 func TestReferenceGrantName(t *testing.T) {
-	if got := ReferenceGrantName("payments-route"); got != "payments-route-backend" {
-		t.Fatalf("unexpected reference grant name %q", got)
+	name := ReferenceGrantName("payments-route", BackendTarget{Name: "entry", Namespace: "payments"})
+	if name == "" || name == "payments-route-backend" {
+		t.Fatalf("expected hashed reference grant name, got %q", name)
 	}
 }
 

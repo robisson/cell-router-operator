@@ -1,14 +1,15 @@
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: Cell
 metadata:
-  name: orders
+  name: payments-canary
 spec:
   state: Active
   namespaceLabels:
-    team: orders
+    team: payments
+    release: canary
   workloadSelector:
-    app: orders-gateway
+    app: payments-canary-gateway
   entrypoint:
-    serviceName: orders-entry
+    serviceName: payments-canary-entry
     port: 8080
   tearDownOnDelete: true
