@@ -1,39 +1,39 @@
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: premium-placement
+  name: tenant-a-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - api.example.com
+    - payments.example.com
   pathMatch:
     type: PathPrefix
     value: /tenant
   headerMatches:
     - name: X-Tenant
-      value: premium
+      value: tenant-a
   destinations:
-    - cellRef: payments
+    - cellRef: payments-cell-1
       weight: 1
 ---
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: standard-placement
+  name: tenant-b-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - api.example.com
+    - payments.example.com
   pathMatch:
     type: PathPrefix
     value: /tenant
   headerMatches:
     - name: X-Tenant
-      value: standard
+      value: tenant-b
   destinations:
-    - cellRef: orders
+    - cellRef: payments-cell-2
       weight: 1

@@ -14,44 +14,21 @@ spec:
         port: 80
         protocol: HTTP
   routes:
-    - name: payments-route
-      cellRef: payments
-      additionalBackends:
-        - cellRef: payments-canary
-          weight: 20
+    - name: payments-cell-1-route
+      cellRef: payments-cell-1
       listenerNames:
         - http
       hostnames:
         - payments.example.com
       pathMatch:
         type: PathPrefix
-        value: /payments
-      headerMatches:
-        - name: X-Tenant
-          value: premium
-      queryParamMatches:
-        - name: plan
-          value: gold
-      weight: 80
-    - name: orders-route
-      cellRef: orders
+        value: /payments/cell-1
+    - name: payments-cell-2-route
+      cellRef: payments-cell-2
       listenerNames:
         - http
       hostnames:
-        - orders.example.com
+        - payments.example.com
       pathMatch:
         type: PathPrefix
-        value: /orders
-      weight: 1
-    - name: beta-route
-      cellRef: payments-canary
-      fallbackBackend:
-        cellRef: payments
-        weight: 1
-      listenerNames:
-        - http
-      hostnames:
-        - beta.example.com
-      pathMatch:
-        type: PathPrefix
-        value: /beta
+        value: /payments/cell-2

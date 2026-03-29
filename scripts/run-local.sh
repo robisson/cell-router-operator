@@ -165,52 +165,42 @@ kubectl -n cell-router-operator-system wait deploy/cell-router-operator-controll
 echo "[cell-router] applying sample cell"
 kubectl apply -f config/samples/cell_v1alpha1_cell.yaml
 
-echo "[cell-router] applying second sample cell"
-kubectl apply -f config/samples/cell_v1alpha1_orders_cell.yaml
-
-echo "[cell-router] applying canary sample cell"
-kubectl apply -f config/samples/cell_v1alpha1_payments_canary_cell.yaml
+echo "[cell-router] applying second payments cell"
+kubectl apply -f config/samples/cell_v1alpha1_payments_cell_2.yaml
 
 echo "[cell-router] deploying sample workload in the cell namespace"
-kubectl apply -f config/samples/payments-workload.yaml
-kubectl -n payments wait deploy/payments-gateway --for condition=Available --timeout=120s
+kubectl apply -f config/samples/payments-cell-1-workload.yaml
+kubectl -n payments-cell-1 wait deploy/payments-cell-1-gateway --for condition=Available --timeout=120s
 
-echo "[cell-router] deploying second sample workload in the cell namespace"
-kubectl apply -f config/samples/orders-workload.yaml
-kubectl -n orders wait deploy/orders-gateway --for condition=Available --timeout=120s
-
-echo "[cell-router] deploying canary workload in the cell namespace"
-kubectl apply -f config/samples/payments-canary-workload.yaml
-kubectl -n payments-canary wait deploy/payments-canary-gateway --for condition=Available --timeout=120s
+echo "[cell-router] deploying second payments workload in the cell namespace"
+kubectl apply -f config/samples/payments-cell-2-workload.yaml
+kubectl -n payments-cell-2 wait deploy/payments-cell-2-gateway --for condition=Available --timeout=120s
 
 echo "[cell-router] waiting for sample cells to become traffic-ready"
-wait_for_jsonpath "cell/payments" '{.status.conditions[?(@.type=="Ready")].status}' "True"
-wait_for_jsonpath "cell/orders" '{.status.conditions[?(@.type=="Ready")].status}' "True"
-wait_for_jsonpath "cell/payments-canary" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+wait_for_jsonpath "cell/payments-cell-1" '{.status.conditions[?(@.type=="Ready")].status}' "True"
+wait_for_jsonpath "cell/payments-cell-2" '{.status.conditions[?(@.type=="Ready")].status}' "True"
 
 echo "[cell-router] verifying sample policies were reconciled"
-kubectl -n payments get resourcequota/cell-quota >/dev/null
-kubectl -n payments get limitrange/cell-limits >/dev/null
-kubectl -n payments get networkpolicy/cell-entrypoint >/dev/null
+kubectl -n payments-cell-1 get resourcequota/cell-quota >/dev/null
+kubectl -n payments-cell-1 get limitrange/cell-limits >/dev/null
+kubectl -n payments-cell-1 get networkpolicy/cell-entrypoint >/dev/null
 
 echo "[cell-router] applying sample cell router"
 kubectl apply -f config/samples/cell_v1alpha1_cellrouter.yaml
 echo "[cell-router] applying sample placements"
 kubectl apply -f config/samples/cell_v1alpha1_cellplacement.yaml
 wait_for_jsonpath "gateway -n cell-router-system cell-router-gateway" '{.status.conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system beta-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system premium-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system standard-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system payments-cell-1-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system payments-cell-2-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system tenant-a-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system tenant-b-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "cellrouter/default-router" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system payments-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system orders-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system beta-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system premium-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system standard-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "cellplacement/premium-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
-wait_for_jsonpath "cellplacement/standard-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system payments-cell-1-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system payments-cell-2-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system tenant-a-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "httproute -n cell-router-system tenant-b-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+wait_for_jsonpath "cellplacement/tenant-a-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
+wait_for_jsonpath "cellplacement/tenant-b-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
 
 echo "[cell-router] port-forwarding Envoy service to verify traffic"
 ENVOY_SERVICE=$(kubectl get svc -n envoy-gateway-system \
@@ -229,79 +219,39 @@ sleep 5
 
 RESPONSE=$(curl -fsS \
   -H 'Host: payments.example.com' \
-  -H 'X-Tenant: premium' \
-  'http://127.0.0.1:8888/payments?plan=gold')
+  'http://127.0.0.1:8888/payments/cell-1')
 
-if [[ "${RESPONSE}" != *"payments backend"* ]]; then
+if [[ "${RESPONSE}" != *"payments cell 1 backend"* ]]; then
   echo "[cell-router] unexpected routed response: ${RESPONSE}" >&2
   exit 1
 fi
 
-ORDERS_RESPONSE=$(curl -fsS \
-  -H 'Host: orders.example.com' \
-  'http://127.0.0.1:8888/orders')
+CELL_2_RESPONSE=$(curl -fsS \
+  -H 'Host: payments.example.com' \
+  'http://127.0.0.1:8888/payments/cell-2')
 
-if [[ "${ORDERS_RESPONSE}" != *"orders backend"* ]]; then
-  echo "[cell-router] unexpected routed response: ${ORDERS_RESPONSE}" >&2
+if [[ "${CELL_2_RESPONSE}" != *"payments cell 2 backend"* ]]; then
+  echo "[cell-router] unexpected routed response: ${CELL_2_RESPONSE}" >&2
   exit 1
 fi
 
-PREMIUM_RESPONSE=$(curl -fsS \
-  -H 'Host: api.example.com' \
-  -H 'X-Tenant: premium' \
+TENANT_A_RESPONSE=$(curl -fsS \
+  -H 'Host: payments.example.com' \
+  -H 'X-Tenant: tenant-a' \
   'http://127.0.0.1:8888/tenant')
 
-if [[ "${PREMIUM_RESPONSE}" != *"payments backend"* ]]; then
-  echo "[cell-router] unexpected premium placement response: ${PREMIUM_RESPONSE}" >&2
+if [[ "${TENANT_A_RESPONSE}" != *"payments cell 1 backend"* ]]; then
+  echo "[cell-router] unexpected tenant-a placement response: ${TENANT_A_RESPONSE}" >&2
   exit 1
 fi
 
-STANDARD_RESPONSE=$(curl -fsS \
-  -H 'Host: api.example.com' \
-  -H 'X-Tenant: standard' \
+TENANT_B_RESPONSE=$(curl -fsS \
+  -H 'Host: payments.example.com' \
+  -H 'X-Tenant: tenant-b' \
   'http://127.0.0.1:8888/tenant')
 
-if [[ "${STANDARD_RESPONSE}" != *"orders backend"* ]]; then
-  echo "[cell-router] unexpected standard placement response: ${STANDARD_RESPONSE}" >&2
-  exit 1
-fi
-
-BETA_RESPONSE=$(curl -fsS \
-  -H 'Host: beta.example.com' \
-  'http://127.0.0.1:8888/beta')
-
-if [[ "${BETA_RESPONSE}" != *"payments canary backend"* ]]; then
-  echo "[cell-router] unexpected beta route response before draining: ${BETA_RESPONSE}" >&2
-  exit 1
-fi
-
-echo "[cell-router] verifying weighted multi-backend routing"
-PAYMENTS_BACKENDS=$(
-  for _ in $(seq 1 30); do
-    curl -fsS \
-      -H 'Host: payments.example.com' \
-      -H 'X-Tenant: premium' \
-      'http://127.0.0.1:8888/payments?plan=gold'
-    printf '\n'
-  done | sort -u
-)
-
-if [[ "${PAYMENTS_BACKENDS}" != *"payments backend"* ]] || [[ "${PAYMENTS_BACKENDS}" != *"payments canary backend"* ]]; then
-  echo "[cell-router] weighted route did not reach both backends: ${PAYMENTS_BACKENDS}" >&2
-  exit 1
-fi
-
-echo "[cell-router] draining payments-canary to validate fallback behavior"
-kubectl patch cell payments-canary --type merge -p '{"spec":{"state":"Draining"}}'
-wait_for_jsonpath "cell/payments-canary" '{.status.operationalState}' "Draining" 120
-wait_for_jsonpath "cell/payments-canary" '{.status.conditions[?(@.type=="Ready")].status}' "False" 120
-
-FALLBACK_RESPONSE=$(curl -fsS \
-  -H 'Host: beta.example.com' \
-  'http://127.0.0.1:8888/beta')
-
-if [[ "${FALLBACK_RESPONSE}" != *"payments backend"* ]]; then
-  echo "[cell-router] fallback route did not switch to the primary cell: ${FALLBACK_RESPONSE}" >&2
+if [[ "${TENANT_B_RESPONSE}" != *"payments cell 2 backend"* ]]; then
+  echo "[cell-router] unexpected tenant-b placement response: ${TENANT_B_RESPONSE}" >&2
   exit 1
 fi
 

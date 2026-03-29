@@ -91,6 +91,8 @@ Today it supports:
 
 The router turns a placement into an `HTTPRoute` and publishes placement status with the resolved backends.
 
+The current samples intentionally focus on two equivalent `payments` cells plus tenant placements. That is closer to a real cell-based topology than routing between unrelated business domains.
+
 ## API Model
 
 Main API types:
@@ -477,7 +479,7 @@ The router reconciler now watches:
 - all `Cell` updates, because lifecycle or backend readiness changes affect routability
 - all `CellPlacement` updates targeting a router
 
-That is how a patch such as `payments-canary -> Draining` can reconfigure routes without touching the router object directly.
+That is how a patch such as `payments-cell-1 -> Draining` or a backend readiness transition can reconfigure routes without touching the router object directly.
 
 ## CellPlacement Internals
 
@@ -540,7 +542,7 @@ A router is `Ready=True` only when:
 - each managed route is accepted by Gateway API
 - `ResolvedRefs=True` when the implementation exposes that condition
 
-The router can still stay ready while a specific route is degraded, as long as it still resolves to usable backends. That is why a drained canary can leave the router healthy while `payments-route` reports a degraded reason.
+The router can still stay ready while a specific route is degraded, as long as it still resolves to usable backends. That matters for scenarios where a route still has another healthy backend or where only part of the sample topology is affected.
 
 ### Placement readiness
 
@@ -585,46 +587,38 @@ The script:
 15. Applies the sample router and placements
 16. Verifies route readiness
 17. Sends real traffic through Envoy
-18. Patches the canary cell to `Draining` and verifies fallback behavior
+18. Verifies direct and placement traffic with real `curl` requests
 
 ## Current Example Topology
 
-The current sample topology includes:
+The current sample topology includes two cells for the same `payments` domain:
 
-- `payments`
-- `orders`
-- `payments-canary`
+- `payments-cell-1`
+- `payments-cell-2`
 
 Explicit routes:
 
-- `payments-route`
+- `payments-cell-1-route`
   - host `payments.example.com`
-  - path `/payments`
-  - header `X-Tenant: premium`
-  - query `plan=gold`
-  - backends: `payments` + weighted `payments-canary`
-- `orders-route`
-  - host `orders.example.com`
-  - path `/orders`
-  - backend: `orders`
-- `beta-route`
-  - host `beta.example.com`
-  - path `/beta`
-  - primary backend: `payments-canary`
-  - fallback backend: `payments`
+  - path `/payments/cell-1`
+  - backend: `payments-cell-1`
+- `payments-cell-2-route`
+  - host `payments.example.com`
+  - path `/payments/cell-2`
+  - backend: `payments-cell-2`
 
 Placements:
 
-- `premium-placement`
-  - host `api.example.com`
+- `tenant-a-placement`
+  - host `payments.example.com`
   - path `/tenant`
-  - header `X-Tenant: premium`
-  - destination: `payments`
-- `standard-placement`
-  - host `api.example.com`
+  - header `X-Tenant: tenant-a`
+  - destination: `payments-cell-1`
+- `tenant-b-placement`
+  - host `payments.example.com`
   - path `/tenant`
-  - header `X-Tenant: standard`
-  - destination: `orders`
+  - header `X-Tenant: tenant-b`
+  - destination: `payments-cell-2`
 
 ## Testing Strategy
 
@@ -642,7 +636,7 @@ Newer tests cover:
 
 - cell waiting for backend endpoints
 - placement materialization
-- fallback routing when a primary cell is draining
+- lifecycle-aware routing decisions when a cell is not traffic-ready
 
 Good future unit test targets:
 
@@ -659,7 +653,6 @@ A more formal e2e suite would ideally cover:
 
 - initial bootstrap
 - direct routing
-- weighted routing
 - placement routing
 - lifecycle transitions
 - stale route cleanup
@@ -846,6 +839,6 @@ The operator is now structured around a stronger pattern than the original basel
 - reconcilers orchestrate lifecycle and traffic-readiness decisions
 - builders define deterministic desired state
 - status conditions reflect operational readiness, not just object creation
-- local validation includes real traffic, weighted routing, placement rules, and fallback during drain
+- local validation includes real traffic and placement rules across two equivalent cells of the same workload domain
 
 If you preserve those boundaries, the project remains straightforward to extend without turning the controllers into large procedural scripts.

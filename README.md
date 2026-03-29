@@ -109,28 +109,23 @@ The script does the following:
 8. Builds the operator image.
 9. Loads the image into Kind.
 10. Installs CRDs and deploys the controller.
-11. Applies three sample cells: `payments`, `orders`, and `payments-canary`.
-12. Deploys three sample workloads.
+11. Applies two sample cells: `payments-cell-1` and `payments-cell-2`.
+12. Deploys two sample workloads.
 13. Verifies that cells become traffic-ready.
 14. Verifies sample namespace policies.
 15. Applies the sample `CellRouter` and sample `CellPlacement` resources.
-16. Verifies routing with real `curl` requests, including weighted routing and fallback during draining.
+16. Verifies routing with real `curl` requests for direct routes and tenant placement rules.
 
 ## Local Verification
 
-The sample resources exercise four categories of behavior:
+The sample resources exercise two categories of behavior:
 
 - direct routing:
-  - `payments.example.com` + `/payments` + header `X-Tenant: premium` + query `plan=gold` -> `payments` and `payments-canary`
-  - `orders.example.com` + `/orders` -> `orders`
+  - `payments.example.com` + `/payments/cell-1` -> `payments-cell-1`
+  - `payments.example.com` + `/payments/cell-2` -> `payments-cell-2`
 - placement routing:
-  - `api.example.com` + `X-Tenant: premium` + `/tenant` -> `payments`
-  - `api.example.com` + `X-Tenant: standard` + `/tenant` -> `orders`
-- weighted routing:
-  - `payments-route` sends traffic to both `payments` and `payments-canary`
-- lifecycle-aware fallback:
-  - `beta.example.com` + `/beta` starts on `payments-canary`
-  - when `payments-canary` is set to `Draining`, the route falls back to `payments`
+  - `payments.example.com` + `X-Tenant: tenant-a` + `/tenant` -> `payments-cell-1`
+  - `payments.example.com` + `X-Tenant: tenant-b` + `/tenant` -> `payments-cell-2`
 
 Useful commands after the script:
 
@@ -156,32 +151,26 @@ kubectl -n envoy-gateway-system port-forward service/${ENVOY_SERVICE} 8888:80
 In another terminal:
 
 ```bash
-curl -H 'Host: payments.example.com' -H 'X-Tenant: premium' \
-  'http://127.0.0.1:8888/payments?plan=gold'
+curl -H 'Host: payments.example.com' \
+  'http://127.0.0.1:8888/payments/cell-1'
 
-curl -H 'Host: orders.example.com' \
-  'http://127.0.0.1:8888/orders'
+curl -H 'Host: payments.example.com' \
+  'http://127.0.0.1:8888/payments/cell-2'
 
-curl -H 'Host: api.example.com' -H 'X-Tenant: premium' \
+curl -H 'Host: payments.example.com' -H 'X-Tenant: tenant-a' \
   'http://127.0.0.1:8888/tenant'
 
-curl -H 'Host: beta.example.com' \
-  'http://127.0.0.1:8888/beta'
-```
+curl -H 'Host: payments.example.com' -H 'X-Tenant: tenant-b' \
+  'http://127.0.0.1:8888/tenant'
 
-To validate fallback explicitly:
-
-```bash
-kubectl patch cell payments-canary --type merge -p '{"spec":{"state":"Draining"}}'
-curl -H 'Host: beta.example.com' 'http://127.0.0.1:8888/beta'
 ```
 
 Expected behavior:
 
-- `payments-route` can return either `payments backend` or `payments canary backend`
-- `orders-route` returns `orders backend`
-- `premium-placement` returns `payments backend`
-- `beta-route` returns `payments canary backend` before draining and `payments backend` after draining
+- `payments-cell-1-route` returns `payments cell 1 backend`
+- `payments-cell-2-route` returns `payments cell 2 backend`
+- `tenant-a-placement` returns `payments cell 1 backend`
+- `tenant-b-placement` returns `payments cell 2 backend`
 
 ## Tests
 
@@ -217,13 +206,13 @@ The current suite covers:
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: Cell
 metadata:
-  name: payments
+  name: payments-cell-1
 spec:
   state: Active
   workloadSelector:
-    app: payments-gateway
+    app: payments-cell-1-gateway
   entrypoint:
-    serviceName: payments-entry
+    serviceName: payments-cell-1-entry
     port: 8080
   policies:
     resourceQuota:
@@ -253,37 +242,24 @@ spec:
         port: 80
         protocol: HTTP
   routes:
-    - name: payments-route
-      cellRef: payments
-      additionalBackends:
-        - cellRef: payments-canary
-          weight: 20
+    - name: payments-cell-1-route
+      cellRef: payments-cell-1
       hostnames:
         - payments.example.com
       listenerNames:
         - http
       pathMatch:
         type: PathPrefix
-        value: /payments
-      headerMatches:
-        - name: X-Tenant
-          value: premium
-      queryParamMatches:
-        - name: plan
-          value: gold
-      weight: 80
-    - name: beta-route
-      cellRef: payments-canary
-      fallbackBackend:
-        cellRef: payments
-        weight: 1
+        value: /payments/cell-1
+    - name: payments-cell-2-route
+      cellRef: payments-cell-2
       hostnames:
-        - beta.example.com
+        - payments.example.com
       listenerNames:
         - http
       pathMatch:
         type: PathPrefix
-        value: /beta
+        value: /payments/cell-2
 ```
 
 ### CellPlacement
@@ -292,21 +268,21 @@ spec:
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: premium-placement
+  name: tenant-a-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - api.example.com
+    - payments.example.com
   pathMatch:
     type: PathPrefix
     value: /tenant
   headerMatches:
     - name: X-Tenant
-      value: premium
+      value: tenant-a
   destinations:
-    - cellRef: payments
+    - cellRef: payments-cell-1
       weight: 1
 ```
 

@@ -1,17 +1,18 @@
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: Cell
 metadata:
-  name: payments
+  name: payments-cell-1
 spec:
   state: Active
   namespaceLabels:
     team: payments
+    cell: "1"
   serviceAnnotations:
     prometheus.io/scrape: "true"
   workloadSelector:
-    app: payments-gateway
+    app: payments-cell-1-gateway
   entrypoint:
-    serviceName: payments-entry
+    serviceName: payments-cell-1-entry
     port: 8080
   policies:
     resourceQuota:
