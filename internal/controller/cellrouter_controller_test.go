@@ -273,8 +273,15 @@ var _ = Describe("CellRouter Controller", func() {
 				RouterRef:     routerName,
 				ListenerNames: []string{"http"},
 				Hostnames:     []gatewayv1.Hostname{"api.example.com"},
-				HeaderMatches: []cellv1alpha1.HTTPHeaderMatch{{Name: "X-Tenant", Value: "premium"}},
-				Destinations:  []cellv1alpha1.CellRouteBackendRef{{CellRef: cellName}},
+				Selectors: []cellv1alpha1.CellPlacementSelector{{
+					Source: cellv1alpha1.CellPlacementSelectorSource{
+						Type: cellv1alpha1.SelectorSourceHeader,
+						Name: "X-Tenant",
+					},
+					Operator: cellv1alpha1.SelectorOperatorExact,
+					Value:    "premium",
+				}},
+				Destinations: []cellv1alpha1.CellRouteBackendRef{{CellRef: cellName}},
 			},
 		}
 
@@ -297,6 +304,55 @@ var _ = Describe("CellRouter Controller", func() {
 		condition := apimeta.FindStatusCondition(updatedPlacement.Status.Conditions, cellv1alpha1.CellPlacementReadyCondition)
 		Expect(condition).NotTo(BeNil())
 		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	It("marks overlapping placements as invalid", func() {
+		placementA := &cellv1alpha1.CellPlacement{
+			ObjectMeta: metav1.ObjectMeta{Name: "range-a"},
+			Spec: cellv1alpha1.CellPlacementSpec{
+				RouterRef:     routerName,
+				ListenerNames: []string{"http"},
+				Hostnames:     []gatewayv1.Hostname{"api.example.com"},
+				Selectors: []cellv1alpha1.CellPlacementSelector{{
+					Source: cellv1alpha1.CellPlacementSelectorSource{
+						Type: cellv1alpha1.SelectorSourceHeader,
+						Name: "X-Shard",
+					},
+					Operator: cellv1alpha1.SelectorOperatorRange,
+					Range: &cellv1alpha1.CellPlacementNumericRange{
+						Start: "0",
+						End:   "100",
+					},
+				}},
+				Destinations: []cellv1alpha1.CellRouteBackendRef{{CellRef: cellName}},
+			},
+		}
+		placementB := placementA.DeepCopy()
+		placementB.Name = "range-b"
+		placementB.Spec.Selectors[0].Range = &cellv1alpha1.CellPlacementNumericRange{Start: "50", End: "150"}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(baseCell.DeepCopy(), baseRouter.DeepCopy(), placementA, placementB).
+			WithStatusSubresource(&cellv1alpha1.Cell{}, &cellv1alpha1.CellRouter{}, &cellv1alpha1.CellPlacement{}, &gatewayv1.HTTPRoute{}, &gatewayv1.Gateway{}, &gatewayv1beta1.ReferenceGrant{}).
+			Build()
+
+		reconciler := &CellRouterReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(64)}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: routerName}})
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, name := range []string{"range-a", "range-b"} {
+			placement := &cellv1alpha1.CellPlacement{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: name}, placement)).To(Succeed())
+			condition := apimeta.FindStatusCondition(placement.Status.Conditions, cellv1alpha1.CellPlacementReadyCondition)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Message).To(ContainSubstring("overlaps"))
+
+			httpRoute := &gatewayv1.HTTPRoute{}
+			err := fakeClient.Get(ctx, types.NamespacedName{Namespace: gatewayNS, Name: name}, httpRoute)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}
 	})
 
 	It("uses fallback backends when the primary cell is draining", func() {

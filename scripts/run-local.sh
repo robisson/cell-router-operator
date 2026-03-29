@@ -192,15 +192,30 @@ kubectl apply -f config/samples/cell_v1alpha1_cellplacement.yaml
 wait_for_jsonpath "gateway -n cell-router-system cell-router-gateway" '{.status.conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-1-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-2-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system tenant-a-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system tenant-b-placement" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "cellrouter/default-router" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-1-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-2-route" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system tenant-a-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "httproute -n cell-router-system tenant-b-placement" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
-wait_for_jsonpath "cellplacement/tenant-a-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
-wait_for_jsonpath "cellplacement/tenant-b-placement" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
+
+placements=(
+  header-exact-placement
+  header-prefix-placement
+  header-suffix-placement
+  header-range-placement
+  query-exact-placement
+  query-prefix-placement
+  query-suffix-placement
+  query-range-placement
+  path-exact-placement
+  path-prefix-placement
+  path-suffix-placement
+  path-range-placement
+)
+
+for placement in "${placements[@]}"; do
+  wait_for_jsonpath "httproute -n cell-router-system ${placement}" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
+  wait_for_jsonpath "httproute -n cell-router-system ${placement}" '{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].status}' "True" 240
+  wait_for_jsonpath "cellplacement/${placement}" '{.status.conditions[?(@.type=="Ready")].status}' "True" 240
+done
 
 echo "[cell-router] port-forwarding Envoy service to verify traffic"
 ENVOY_SERVICE=$(kubectl get svc -n envoy-gateway-system \
@@ -217,43 +232,122 @@ kubectl -n envoy-gateway-system port-forward "service/${ENVOY_SERVICE}" 8888:80 
 PORT_FORWARD_PID=$!
 sleep 5
 
+assert_contains() {
+  local expected="$1"
+  local response="$2"
+  local context="$3"
+  if [[ "${response}" != *"${expected}"* ]]; then
+    echo "[cell-router] unexpected response for ${context}: ${response}" >&2
+    exit 1
+  fi
+}
+
+assert_status() {
+  local expected="$1"
+  local actual="$2"
+  local context="$3"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "[cell-router] unexpected status for ${context}: ${actual}" >&2
+    exit 1
+  fi
+}
+
 RESPONSE=$(curl -fsS \
   -H 'Host: payments.example.com' \
   'http://127.0.0.1:8888/payments/cell-1')
 
-if [[ "${RESPONSE}" != *"payments cell 1 backend"* ]]; then
-  echo "[cell-router] unexpected routed response: ${RESPONSE}" >&2
-  exit 1
-fi
+assert_contains "payments cell 1 backend" "${RESPONSE}" "payments-cell-1-route"
 
 CELL_2_RESPONSE=$(curl -fsS \
   -H 'Host: payments.example.com' \
   'http://127.0.0.1:8888/payments/cell-2')
 
-if [[ "${CELL_2_RESPONSE}" != *"payments cell 2 backend"* ]]; then
-  echo "[cell-router] unexpected routed response: ${CELL_2_RESPONSE}" >&2
-  exit 1
-fi
+assert_contains "payments cell 2 backend" "${CELL_2_RESPONSE}" "payments-cell-2-route"
 
-TENANT_A_RESPONSE=$(curl -fsS \
-  -H 'Host: payments.example.com' \
-  -H 'X-Tenant: tenant-a' \
-  'http://127.0.0.1:8888/tenant')
+HEADER_EXACT_RESPONSE=$(curl -fsS \
+  -H 'Host: header-exact.payments.example.com' \
+  -H 'X-Account: tenant-a' \
+  'http://127.0.0.1:8888/')
+assert_contains "payments cell 1 backend" "${HEADER_EXACT_RESPONSE}" "header-exact-placement"
 
-if [[ "${TENANT_A_RESPONSE}" != *"payments cell 1 backend"* ]]; then
-  echo "[cell-router] unexpected tenant-a placement response: ${TENANT_A_RESPONSE}" >&2
-  exit 1
-fi
+HEADER_PREFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: header-prefix.payments.example.com' \
+  -H 'X-Account: team-alpha' \
+  'http://127.0.0.1:8888/')
+assert_contains "payments cell 1 backend" "${HEADER_PREFIX_RESPONSE}" "header-prefix-placement"
 
-TENANT_B_RESPONSE=$(curl -fsS \
-  -H 'Host: payments.example.com' \
-  -H 'X-Tenant: tenant-b' \
-  'http://127.0.0.1:8888/tenant')
+HEADER_SUFFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: header-suffix.payments.example.com' \
+  -H 'X-Account: account-west' \
+  'http://127.0.0.1:8888/')
+assert_contains "payments cell 2 backend" "${HEADER_SUFFIX_RESPONSE}" "header-suffix-placement"
 
-if [[ "${TENANT_B_RESPONSE}" != *"payments cell 2 backend"* ]]; then
-  echo "[cell-router] unexpected tenant-b placement response: ${TENANT_B_RESPONSE}" >&2
-  exit 1
-fi
+HEADER_RANGE_RESPONSE=$(curl -fsS \
+  -H 'Host: header-range.payments.example.com' \
+  -H 'X-Shard: 150' \
+  'http://127.0.0.1:8888/')
+assert_contains "payments cell 1 backend" "${HEADER_RANGE_RESPONSE}" "header-range-placement"
+
+QUERY_EXACT_RESPONSE=$(curl -fsS \
+  -H 'Host: query-exact.payments.example.com' \
+  'http://127.0.0.1:8888/?account=tenant-b')
+assert_contains "payments cell 2 backend" "${QUERY_EXACT_RESPONSE}" "query-exact-placement"
+
+QUERY_PREFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: query-prefix.payments.example.com' \
+  'http://127.0.0.1:8888/?account=team-alpha')
+assert_contains "payments cell 1 backend" "${QUERY_PREFIX_RESPONSE}" "query-prefix-placement"
+
+QUERY_SUFFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: query-suffix.payments.example.com' \
+  'http://127.0.0.1:8888/?account=account-west')
+assert_contains "payments cell 2 backend" "${QUERY_SUFFIX_RESPONSE}" "query-suffix-placement"
+
+QUERY_RANGE_RESPONSE=$(curl -fsS \
+  -H 'Host: query-range.payments.example.com' \
+  'http://127.0.0.1:8888/?shard=250')
+assert_contains "payments cell 2 backend" "${QUERY_RANGE_RESPONSE}" "query-range-placement"
+
+PATH_EXACT_RESPONSE=$(curl -fsS \
+  -H 'Host: path-exact.payments.example.com' \
+  'http://127.0.0.1:8888/accounts/tenant-a')
+assert_contains "payments cell 1 backend" "${PATH_EXACT_RESPONSE}" "path-exact-placement"
+
+PATH_PREFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: path-prefix.payments.example.com' \
+  'http://127.0.0.1:8888/accounts/team-alpha')
+assert_contains "payments cell 1 backend" "${PATH_PREFIX_RESPONSE}" "path-prefix-placement"
+
+PATH_SUFFIX_RESPONSE=$(curl -fsS \
+  -H 'Host: path-suffix.payments.example.com' \
+  'http://127.0.0.1:8888/accounts/account-west')
+assert_contains "payments cell 2 backend" "${PATH_SUFFIX_RESPONSE}" "path-suffix-placement"
+
+PATH_RANGE_RESPONSE=$(curl -fsS \
+  -H 'Host: path-range.payments.example.com' \
+  'http://127.0.0.1:8888/orders/150')
+assert_contains "payments cell 2 backend" "${PATH_RANGE_RESPONSE}" "path-range-placement"
+
+HEADER_NEGATIVE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H 'Host: header-exact.payments.example.com' \
+  -H 'X-Account: tenant-b' \
+  'http://127.0.0.1:8888/')
+assert_status "404" "${HEADER_NEGATIVE_STATUS}" "header exact negative"
+
+QUERY_NEGATIVE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H 'Host: query-prefix.payments.example.com' \
+  'http://127.0.0.1:8888/?account=alpha-team')
+assert_status "404" "${QUERY_NEGATIVE_STATUS}" "query prefix negative"
+
+PATH_NEGATIVE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H 'Host: path-suffix.payments.example.com' \
+  'http://127.0.0.1:8888/accounts/account-east')
+assert_status "404" "${PATH_NEGATIVE_STATUS}" "path suffix negative"
+
+RANGE_NEGATIVE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H 'Host: path-range.payments.example.com' \
+  'http://127.0.0.1:8888/orders/250')
+assert_status "404" "${RANGE_NEGATIVE_STATUS}" "path range negative"
 
 echo "[cell-router] setup complete"
 echo "[cell-router] routing validated successfully"

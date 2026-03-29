@@ -1,39 +1,237 @@
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: tenant-a-placement
+  name: header-exact-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - payments.example.com
-  pathMatch:
-    type: PathPrefix
-    value: /tenant
-  headerMatches:
-    - name: X-Tenant
+    - header-exact.payments.example.com
+  selectors:
+    - source:
+        type: Header
+        name: X-Account
+      operator: Exact
       value: tenant-a
   destinations:
     - cellRef: payments-cell-1
-      weight: 1
 ---
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: tenant-b-placement
+  name: header-prefix-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - payments.example.com
-  pathMatch:
-    type: PathPrefix
-    value: /tenant
-  headerMatches:
-    - name: X-Tenant
+    - header-prefix.payments.example.com
+  selectors:
+    - source:
+        type: Header
+        name: X-Account
+      operator: Prefix
+      value: team-
+  destinations:
+    - cellRef: payments-cell-1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: header-suffix-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - header-suffix.payments.example.com
+  selectors:
+    - source:
+        type: Header
+        name: X-Account
+      operator: Suffix
+      value: -west
+  destinations:
+    - cellRef: payments-cell-2
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: header-range-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - header-range.payments.example.com
+  selectors:
+    - source:
+        type: Header
+        name: X-Shard
+      operator: Range
+      range:
+        start: "100"
+        end: "199"
+  destinations:
+    - cellRef: payments-cell-1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: query-exact-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - query-exact.payments.example.com
+  selectors:
+    - source:
+        type: QueryParam
+        name: account
+      operator: Exact
       value: tenant-b
   destinations:
     - cellRef: payments-cell-2
-      weight: 1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: query-prefix-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - query-prefix.payments.example.com
+  selectors:
+    - source:
+        type: QueryParam
+        name: account
+      operator: Prefix
+      value: team-
+  destinations:
+    - cellRef: payments-cell-1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: query-suffix-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - query-suffix.payments.example.com
+  selectors:
+    - source:
+        type: QueryParam
+        name: account
+      operator: Suffix
+      value: -west
+  destinations:
+    - cellRef: payments-cell-2
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: query-range-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - query-range.payments.example.com
+  selectors:
+    - source:
+        type: QueryParam
+        name: shard
+      operator: Range
+      range:
+        start: "200"
+        end: "299"
+  destinations:
+    - cellRef: payments-cell-2
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: path-exact-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - path-exact.payments.example.com
+  selectors:
+    - source:
+        type: PathCapture
+        name: accountId
+        pathRegex: '^/accounts/(?P<accountId>[a-z0-9-]+)$'
+      operator: Exact
+      value: tenant-a
+  destinations:
+    - cellRef: payments-cell-1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: path-prefix-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - path-prefix.payments.example.com
+  selectors:
+    - source:
+        type: PathCapture
+        name: accountId
+        pathRegex: '^/accounts/(?P<accountId>[a-z0-9-]+)$'
+      operator: Prefix
+      value: team-
+  destinations:
+    - cellRef: payments-cell-1
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: path-suffix-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - path-suffix.payments.example.com
+  selectors:
+    - source:
+        type: PathCapture
+        name: accountId
+        pathRegex: '^/accounts/(?P<accountId>[a-z0-9-]+)$'
+      operator: Suffix
+      value: -west
+  destinations:
+    - cellRef: payments-cell-2
+---
+apiVersion: cell.cellrouter.io/v1alpha1
+kind: CellPlacement
+metadata:
+  name: path-range-placement
+spec:
+  routerRef: default-router
+  listenerNames:
+    - http
+  hostnames:
+    - path-range.payments.example.com
+  selectors:
+    - source:
+        type: PathCapture
+        name: orderId
+        pathRegex: '^/orders/(?P<orderId>[0-9]+)$'
+      operator: Range
+      range:
+        start: "100"
+        end: "199"
+  destinations:
+    - cellRef: payments-cell-2

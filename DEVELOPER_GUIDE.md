@@ -84,14 +84,22 @@ Today it supports:
 - `routerRef`
 - listener names
 - hostnames
-- path match
-- header matches
-- query parameter matches
+- selector-based matching across headers, query parameters, and named path captures
+- selector operators `Exact`, `Prefix`, `Suffix`, and `Range`
 - one or more destination cells with weights
+
+Selector semantics:
+
+- all selectors inside one placement are combined with AND
+- `Exact` on headers and query params becomes native Gateway API exact matching
+- `Prefix`, `Suffix`, and `Range` become regular-expression-backed matching
+- `PathCapture` always compiles to a path regular expression by constraining the named capture inside `pathRegex`
+- `Range` is inclusive, numeric, and value-based
+- `Range` is not consistent hashing
 
 The router turns a placement into an `HTTPRoute` and publishes placement status with the resolved backends.
 
-The current samples intentionally focus on two equivalent `payments` cells plus tenant placements. That is closer to a real cell-based topology than routing between unrelated business domains.
+The current samples intentionally focus on two equivalent `payments` cells plus selector-driven placements. That is closer to a real cell-based topology than routing between unrelated business domains.
 
 ## API Model
 
@@ -186,9 +194,13 @@ Important fields:
 - `spec.routerRef`
 - `spec.listenerNames`
 - `spec.hostnames`
-- `spec.pathMatch`
-- `spec.headerMatches`
-- `spec.queryParamMatches`
+- `spec.selectors[].source.type`
+- `spec.selectors[].source.name`
+- `spec.selectors[].source.pathRegex`
+- `spec.selectors[].operator`
+- `spec.selectors[].value`
+- `spec.selectors[].range.start`
+- `spec.selectors[].range.end`
 - `spec.destinations`
 
 Status fields:
@@ -313,6 +325,14 @@ This keeps reconcilers focused on orchestration and makes mutation logic testabl
 - binds parent refs to the managed gateway
 - builds matches from path, header, and query configuration
 - emits one or more backend refs with weights
+
+Placement selector compilation:
+
+- header/query `Exact` stays as native Gateway API exact matching
+- header/query `Prefix`, `Suffix`, and `Range` are compiled into anchored regular expressions
+- `PathCapture` selectors compile into one `HTTPPathMatch` of type `RegularExpression`
+- multiple placement selectors become one `HTTPRouteMatch` with AND semantics
+- numeric ranges are value-based, inclusive, and not hash-based
 
 `ReferenceGrantName`:
 
@@ -493,6 +513,11 @@ That means:
 
 This is a reasonable tradeoff while the placement model is still small. If placement logic grows significantly, splitting it into a dedicated controller would become easier to justify.
 
+The placement compiler also enforces two guardrails:
+
+- each selector source can appear only once in a placement
+- obviously overlapping numeric range placements for the same router are rejected so route precedence does not become ambiguous
+
 ## Cross-Namespace Routing and ReferenceGrant
 
 Gateway API requires explicit permission when an `HTTPRoute` in one namespace targets a `Service` in another namespace.
@@ -609,16 +634,28 @@ Explicit routes:
 
 Placements:
 
-- `tenant-a-placement`
-  - host `payments.example.com`
-  - path `/tenant`
-  - header `X-Tenant: tenant-a`
-  - destination: `payments-cell-1`
-- `tenant-b-placement`
-  - host `payments.example.com`
-  - path `/tenant`
-  - header `X-Tenant: tenant-b`
-  - destination: `payments-cell-2`
+- header selectors:
+  - `header-exact-placement`
+  - `header-prefix-placement`
+  - `header-suffix-placement`
+  - `header-range-placement`
+- query selectors:
+  - `query-exact-placement`
+  - `query-prefix-placement`
+  - `query-suffix-placement`
+  - `query-range-placement`
+- path capture selectors:
+  - `path-exact-placement`
+  - `path-prefix-placement`
+  - `path-suffix-placement`
+  - `path-range-placement`
+
+The samples intentionally cover all supported placement operators across all supported selector sources:
+
+- exact header/query/path-capture routing
+- prefix header/query/path-capture routing
+- suffix header/query/path-capture routing
+- numeric inclusive range routing for header/query/path-capture values
 
 ## Testing Strategy
 
@@ -636,6 +673,8 @@ Newer tests cover:
 
 - cell waiting for backend endpoints
 - placement materialization
+- selector validation and compilation
+- overlap rejection for obviously conflicting numeric range placements
 - lifecycle-aware routing decisions when a cell is not traffic-ready
 
 Good future unit test targets:

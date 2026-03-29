@@ -230,15 +230,30 @@ func (r *CellRouterReconciler) reconcileGateway(ctx context.Context, router *cel
 }
 
 func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cellv1alpha1.CellRouter, gatewayNamespace string, placements []cellv1alpha1.CellPlacement, logger logr.Logger) (allReady bool, needsRequeue bool, statuses []cellv1alpha1.ManagedRouteStatus, err error) {
-	plans, err := buildRoutePlans(router, placements)
+	plans, invalidPlacements, err := buildRoutePlans(router, placements)
 	if err != nil {
 		return false, false, nil, err
 	}
 
 	expectedRoutes := make(map[string]struct{}, len(plans))
 	expectedGrants := map[string]struct{}{}
-	statuses = make([]cellv1alpha1.ManagedRouteStatus, 0, len(plans))
+	statuses = make([]cellv1alpha1.ManagedRouteStatus, 0, len(plans)+len(invalidPlacements))
 	allReady = true
+
+	for placementName, reason := range invalidPlacements {
+		allReady = false
+		placement := findPlacementByName(placements, placementName)
+		if placement != nil {
+			if err := r.patchPlacementReadiness(ctx, placement, nil, reason, false); err != nil {
+				return false, true, statuses, err
+			}
+		}
+		statuses = append(statuses, cellv1alpha1.ManagedRouteStatus{
+			Name:         placementName,
+			PlacementRef: placementName,
+			Reason:       reason,
+		})
+	}
 
 	for _, plan := range plans {
 		backends, backendRefs, reason, routeNeedsRequeue, resolveErr := r.resolveRouteBackends(ctx, plan)
@@ -317,13 +332,14 @@ func (r *CellRouterReconciler) reconcileRoutes(ctx context.Context, router *cell
 	return allReady, needsRequeue, statuses, nil
 }
 
-func buildRoutePlans(router *cellv1alpha1.CellRouter, placements []cellv1alpha1.CellPlacement) ([]routePlan, error) {
+func buildRoutePlans(router *cellv1alpha1.CellRouter, placements []cellv1alpha1.CellPlacement) ([]routePlan, map[string]string, error) {
 	plans := make([]routePlan, 0, len(router.Spec.Routes)+len(placements))
+	invalidPlacements := validatePlacementOverlaps(placements)
 	seenNames := map[string]struct{}{}
 
 	for _, routeSpec := range router.Spec.Routes {
 		if _, exists := seenNames[routeSpec.Name]; exists {
-			return nil, fmt.Errorf("duplicate route name %q", routeSpec.Name)
+			return nil, nil, fmt.Errorf("duplicate route name %q", routeSpec.Name)
 		}
 		seenNames[routeSpec.Name] = struct{}{}
 		plans = append(plans, routePlan{name: routeSpec.Name, spec: routeSpec})
@@ -332,10 +348,19 @@ func buildRoutePlans(router *cellv1alpha1.CellRouter, placements []cellv1alpha1.
 	for idx := range placements {
 		placement := placements[idx]
 		if _, exists := seenNames[placement.Name]; exists {
-			return nil, fmt.Errorf("placement %q conflicts with an existing route name", placement.Name)
+			return nil, nil, fmt.Errorf("placement %q conflicts with an existing route name", placement.Name)
 		}
-		spec := routeSpecFromPlacement(&placement)
 		seenNames[placement.Name] = struct{}{}
+		if reason, invalid := invalidPlacements[placement.Name]; invalid {
+			invalidPlacements[placement.Name] = reason
+			continue
+		}
+
+		spec, err := routeSpecFromPlacement(&placement)
+		if err != nil {
+			invalidPlacements[placement.Name] = "invalid placement: " + err.Error()
+			continue
+		}
 		plans = append(plans, routePlan{
 			name:         placement.Name,
 			spec:         spec,
@@ -344,28 +369,7 @@ func buildRoutePlans(router *cellv1alpha1.CellRouter, placements []cellv1alpha1.
 		})
 	}
 
-	return plans, nil
-}
-
-func routeSpecFromPlacement(placement *cellv1alpha1.CellPlacement) cellv1alpha1.CellRouteSpec {
-	spec := cellv1alpha1.CellRouteSpec{
-		Name:              placement.Name,
-		ListenerNames:     placement.Spec.ListenerNames,
-		Hostnames:         placement.Spec.Hostnames,
-		PathMatch:         placement.Spec.PathMatch,
-		HeaderMatches:     placement.Spec.HeaderMatches,
-		QueryParamMatches: placement.Spec.QueryParamMatches,
-	}
-
-	if len(placement.Spec.Destinations) > 0 {
-		spec.CellRef = placement.Spec.Destinations[0].CellRef
-		spec.Weight = placement.Spec.Destinations[0].Weight
-		if len(placement.Spec.Destinations) > 1 {
-			spec.AdditionalBackends = append([]cellv1alpha1.CellRouteBackendRef(nil), placement.Spec.Destinations[1:]...)
-		}
-	}
-
-	return spec
+	return plans, invalidPlacements, nil
 }
 
 func (r *CellRouterReconciler) listPlacements(ctx context.Context, routerName string) ([]cellv1alpha1.CellPlacement, error) {
@@ -383,6 +387,15 @@ func (r *CellRouterReconciler) listPlacements(ctx context.Context, routerName st
 	}
 
 	return placements, nil
+}
+
+func findPlacementByName(placements []cellv1alpha1.CellPlacement, placementName string) *cellv1alpha1.CellPlacement {
+	for idx := range placements {
+		if placements[idx].Name == placementName {
+			return &placements[idx]
+		}
+	}
+	return nil
 }
 
 func (r *CellRouterReconciler) resolveRouteBackends(ctx context.Context, plan routePlan) ([]routerresource.BackendTarget, []string, string, bool, error) {

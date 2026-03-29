@@ -166,6 +166,33 @@ func TestAdditionalDeepCopies(t *testing.T) {
 		t.Fatalf("expected query match type to be copied")
 	}
 
+	placementSpec := &CellPlacementSpec{
+		RouterRef:     "default-router",
+		ListenerNames: []string{"http"},
+		Hostnames:     []gatewayv1.Hostname{host},
+		Selectors: []CellPlacementSelector{{
+			Source: CellPlacementSelectorSource{
+				Type:      SelectorSourcePathCapture,
+				Name:      "tenant",
+				PathRegex: `^/tenants/(?P<tenant>[a-z0-9-]+)$`,
+			},
+			Operator: SelectorOperatorPrefix,
+			Value:    "team-",
+		}},
+		Destinations: []CellRouteBackendRef{{CellRef: "payments-cell-1"}},
+	}
+	if clone := placementSpec.DeepCopy(); len(clone.Selectors) != 1 || clone.Selectors[0].Source.PathRegex == "" {
+		t.Fatalf("expected selectors to be copied")
+	}
+
+	if selector := (&CellPlacementSelector{
+		Source:   CellPlacementSelectorSource{Type: SelectorSourceHeader, Name: "X-Shard"},
+		Operator: SelectorOperatorRange,
+		Range:    &CellPlacementNumericRange{Start: "0", End: "511"},
+	}).DeepCopy(); selector.Range == nil || selector.Range.End != "511" {
+		t.Fatalf("expected selector range to be copied")
+	}
+
 	if managed := (&ManagedRouteStatus{ListenerNames: []string{"http"}, LastTransitionTime: &metav1.Time{Time: time.Now()}}).DeepCopy(); managed.LastTransitionTime == nil {
 		t.Fatalf("expected managed route transition time to be copied")
 	}

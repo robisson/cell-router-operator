@@ -50,7 +50,8 @@ At a high level:
 5. A `CellRouter` declares explicit routes and gateway configuration.
 6. `CellPlacement` resources add reusable routing rules that resolve to one or more cells.
 7. The operator creates a `Gateway`, `HTTPRoute` resources, and cross-namespace `ReferenceGrant` objects.
-8. Traffic is routed according to hostname, path, headers, query params, weights, lifecycle state, and fallback behavior.
+8. Placement selectors can match exact values, prefixes, suffixes, and numeric inclusive ranges across headers, query parameters, and named path captures.
+9. Traffic is routed according to hostname, path, headers, query params, weights, lifecycle state, and fallback behavior.
 
 ## Architecture
 
@@ -114,7 +115,7 @@ The script does the following:
 13. Verifies that cells become traffic-ready.
 14. Verifies sample namespace policies.
 15. Applies the sample `CellRouter` and sample `CellPlacement` resources.
-16. Verifies routing with real `curl` requests for direct routes and tenant placement rules.
+16. Verifies routing with real `curl` requests for direct routes and selector-based placement rules.
 
 ## Local Verification
 
@@ -124,8 +125,21 @@ The sample resources exercise two categories of behavior:
   - `payments.example.com` + `/payments/cell-1` -> `payments-cell-1`
   - `payments.example.com` + `/payments/cell-2` -> `payments-cell-2`
 - placement routing:
-  - `payments.example.com` + `X-Tenant: tenant-a` + `/tenant` -> `payments-cell-1`
-  - `payments.example.com` + `X-Tenant: tenant-b` + `/tenant` -> `payments-cell-2`
+  - header selectors:
+    - `header-exact.payments.example.com` + `X-Account: tenant-a` -> `payments-cell-1`
+    - `header-prefix.payments.example.com` + `X-Account: team-alpha` -> `payments-cell-1`
+    - `header-suffix.payments.example.com` + `X-Account: account-west` -> `payments-cell-2`
+    - `header-range.payments.example.com` + `X-Shard: 150` -> `payments-cell-1`
+  - query selectors:
+    - `query-exact.payments.example.com` + `?account=tenant-b` -> `payments-cell-2`
+    - `query-prefix.payments.example.com` + `?account=team-alpha` -> `payments-cell-1`
+    - `query-suffix.payments.example.com` + `?account=account-west` -> `payments-cell-2`
+    - `query-range.payments.example.com` + `?shard=250` -> `payments-cell-2`
+  - path capture selectors:
+    - `path-exact.payments.example.com` + `/accounts/tenant-a` -> `payments-cell-1`
+    - `path-prefix.payments.example.com` + `/accounts/team-alpha` -> `payments-cell-1`
+    - `path-suffix.payments.example.com` + `/accounts/account-west` -> `payments-cell-2`
+    - `path-range.payments.example.com` + `/orders/150` -> `payments-cell-2`
 
 Useful commands after the script:
 
@@ -157,11 +171,14 @@ curl -H 'Host: payments.example.com' \
 curl -H 'Host: payments.example.com' \
   'http://127.0.0.1:8888/payments/cell-2'
 
-curl -H 'Host: payments.example.com' -H 'X-Tenant: tenant-a' \
-  'http://127.0.0.1:8888/tenant'
+curl -H 'Host: header-exact.payments.example.com' -H 'X-Account: tenant-a' \
+  'http://127.0.0.1:8888/'
 
-curl -H 'Host: payments.example.com' -H 'X-Tenant: tenant-b' \
-  'http://127.0.0.1:8888/tenant'
+curl -H 'Host: query-range.payments.example.com' \
+  'http://127.0.0.1:8888/?shard=250'
+
+curl -H 'Host: path-range.payments.example.com' \
+  'http://127.0.0.1:8888/orders/150'
 
 ```
 
@@ -169,8 +186,8 @@ Expected behavior:
 
 - `payments-cell-1-route` returns `payments cell 1 backend`
 - `payments-cell-2-route` returns `payments cell 2 backend`
-- `tenant-a-placement` returns `payments cell 1 backend`
-- `tenant-b-placement` returns `payments cell 2 backend`
+- header, query, and path capture placements return the backend configured for each exact, prefix, suffix, or numeric range example
+- non-matching selector requests return `404`
 
 ## Tests
 
@@ -194,6 +211,7 @@ The current suite covers:
 - `CellRouter` reconciliation
 - traffic-readiness logic
 - `CellPlacement` materialization
+- selector validation and compilation
 - fallback behavior
 - Namespace, Service, Gateway, HTTPRoute, and `ReferenceGrant` builders
 - metadata merge helpers
@@ -268,23 +286,32 @@ spec:
 apiVersion: cell.cellrouter.io/v1alpha1
 kind: CellPlacement
 metadata:
-  name: tenant-a-placement
+  name: path-range-placement
 spec:
   routerRef: default-router
   listenerNames:
     - http
   hostnames:
-    - payments.example.com
-  pathMatch:
-    type: PathPrefix
-    value: /tenant
-  headerMatches:
-    - name: X-Tenant
-      value: tenant-a
+    - path-range.payments.example.com
+  selectors:
+    - source:
+        type: PathCapture
+        name: orderId
+        pathRegex: ^/orders/(?P<orderId>[0-9]+)$
+      operator: Range
+      range:
+        start: "100"
+        end: "199"
   destinations:
-    - cellRef: payments-cell-1
-      weight: 1
+    - cellRef: payments-cell-2
 ```
+
+Selector behavior:
+
+- `Exact` on headers and query parameters is translated to native Gateway API exact matches.
+- `Prefix`, `Suffix`, and `Range` are translated to anchored regular expressions.
+- `PathCapture` selectors always compile to a path regular expression by constraining the named capture inside `pathRegex`.
+- `Range` is value-based and numeric. It is not consistent hashing.
 
 ## Repository Layout
 

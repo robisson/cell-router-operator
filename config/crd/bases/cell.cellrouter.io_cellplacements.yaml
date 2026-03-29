@@ -63,34 +63,6 @@ spec:
                   type: object
                 minItems: 1
                 type: array
-              headerMatches:
-                description: HeaderMatches constrains traffic using HTTP header matching.
-                items:
-                  description: HTTPHeaderMatch represents a single HTTP header match
-                    rule.
-                  properties:
-                    name:
-                      description: Name is the HTTP header name to match.
-                      maxLength: 256
-                      minLength: 1
-                      pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
-                      type: string
-                    type:
-                      description: Type selects the header match strategy. Defaults
-                        to HeaderMatchExact.
-                      enum:
-                      - Exact
-                      - RegularExpression
-                      type: string
-                    value:
-                      description: Value is the HTTP header value to match.
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  - value
-                  type: object
-                type: array
               hostnames:
                 description: Hostnames declares the hostnames handled by the placement
                   route.
@@ -121,59 +93,88 @@ spec:
                 items:
                   type: string
                 type: array
-              pathMatch:
-                description: PathMatch constrains traffic to a specific path expression.
-                properties:
-                  type:
-                    description: Type is the path matching strategy. Defaults to PathMatchPathPrefix.
-                    enum:
-                    - Exact
-                    - PathPrefix
-                    - RegularExpression
-                    type: string
-                  value:
-                    description: Value is the path value.
-                    minLength: 1
-                    type: string
-                required:
-                - value
-                type: object
-              queryParamMatches:
-                description: QueryParamMatches constrains traffic using HTTP query
-                  parameter matching.
-                items:
-                  description: HTTPQueryParamMatch represents a single query parameter
-                    match rule.
-                  properties:
-                    name:
-                      description: Name is the query parameter name.
-                      maxLength: 256
-                      minLength: 1
-                      pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
-                      type: string
-                    type:
-                      description: Type selects the match strategy. Defaults to QueryParamMatchExact.
-                      enum:
-                      - Exact
-                      - RegularExpression
-                      type: string
-                    value:
-                      description: Value is the expected parameter value.
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  - value
-                  type: object
-                type: array
               routerRef:
                 description: RouterRef points to the CellRouter responsible for materializing
                   this placement.
                 minLength: 1
                 type: string
+              selectors:
+                description: |-
+                  Selectors are combined with AND semantics.
+                  Every selector must match for the placement to apply.
+                items:
+                  description: CellPlacementSelector describes one selector used to
+                    decide whether a placement applies.
+                  properties:
+                    operator:
+                      description: Operator selects the matching strategy.
+                      enum:
+                      - Exact
+                      - Prefix
+                      - Suffix
+                      - Range
+                      type: string
+                    range:
+                      description: Range is used by the Range operator.
+                      properties:
+                        end:
+                          description: End is the inclusive range end.
+                          pattern: ^(0|[1-9][0-9]*)$
+                          type: string
+                        start:
+                          description: Start is the inclusive range start.
+                          pattern: ^(0|[1-9][0-9]*)$
+                          type: string
+                      required:
+                      - end
+                      - start
+                      type: object
+                    source:
+                      description: Source defines where the value should be extracted
+                        from.
+                      properties:
+                        name:
+                          description: Name is the header, query parameter, or named
+                            path capture to inspect.
+                          minLength: 1
+                          type: string
+                        pathRegex:
+                          description: |-
+                            PathRegex is required only for PathCapture selectors.
+                            It must contain the named capture referenced by Name.
+                          type: string
+                        type:
+                          description: Type identifies whether the selector reads
+                            from a header, query parameter, or path capture.
+                          enum:
+                          - Header
+                          - QueryParam
+                          - PathCapture
+                          type: string
+                      required:
+                      - name
+                      - type
+                      type: object
+                    value:
+                      description: Value is used by Exact, Prefix, and Suffix operators.
+                      type: string
+                  required:
+                  - operator
+                  - source
+                  type: object
+                  x-kubernetes-validations:
+                  - message: value is required for Exact, Prefix, and Suffix operators
+                    rule: self.operator == 'Range' || has(self.value)
+                  - message: range is required for the Range operator
+                    rule: self.operator != 'Range' || has(self.range)
+                  - message: range must not be set for Exact, Prefix, or Suffix operators
+                    rule: self.operator == 'Range' || !has(self.range)
+                minItems: 1
+                type: array
             required:
             - destinations
             - routerRef
+            - selectors
             type: object
           status:
             description: Status defines the observed state of the placement.
