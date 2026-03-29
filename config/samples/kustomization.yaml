@@ -1,7 +1,7 @@
 ## Append samples of your project ##
 resources:
-- cell_v1alpha1_cell.yaml
-- cell_v1alpha1_payments_cell_2.yaml
-- cell_v1alpha1_cellrouter.yaml
-- cell_v1alpha1_cellplacement.yaml
+- payments-cell-1.yaml
+- payments-cell-2.yaml
+- default-router.yaml
+- header-exact-placement.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

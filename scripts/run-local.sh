@@ -163,17 +163,17 @@ kubectl -n cell-router-operator-system wait deploy/cell-router-operator-controll
   --for condition=Available --timeout=120s
 
 echo "[cell-router] applying sample cell"
-kubectl apply -f config/samples/cell_v1alpha1_cell.yaml
+kubectl apply -f config/samples/payments-cell-1.yaml
 
 echo "[cell-router] applying second payments cell"
-kubectl apply -f config/samples/cell_v1alpha1_payments_cell_2.yaml
+kubectl apply -f config/samples/payments-cell-2.yaml
 
 echo "[cell-router] deploying sample workload in the cell namespace"
-kubectl apply -f config/samples/payments-cell-1-workload.yaml
+kubectl apply -f config/samples/payments-cell-1-deployment.yaml
 kubectl -n payments-cell-1 wait deploy/payments-cell-1-gateway --for condition=Available --timeout=120s
 
 echo "[cell-router] deploying second payments workload in the cell namespace"
-kubectl apply -f config/samples/payments-cell-2-workload.yaml
+kubectl apply -f config/samples/payments-cell-2-deployment.yaml
 kubectl -n payments-cell-2 wait deploy/payments-cell-2-gateway --for condition=Available --timeout=120s
 
 echo "[cell-router] waiting for sample cells to become traffic-ready"
@@ -186,9 +186,9 @@ kubectl -n payments-cell-1 get limitrange/cell-limits >/dev/null
 kubectl -n payments-cell-1 get networkpolicy/cell-entrypoint >/dev/null
 
 echo "[cell-router] applying sample cell router"
-kubectl apply -f config/samples/cell_v1alpha1_cellrouter.yaml
+kubectl apply -f config/samples/default-router.yaml
 echo "[cell-router] applying sample placements"
-kubectl apply -f config/samples/cell_v1alpha1_cellplacement.yaml
+kubectl apply -f config/samples/header-exact-placement.yaml
 wait_for_jsonpath "gateway -n cell-router-system cell-router-gateway" '{.status.conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-1-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
 wait_for_jsonpath "httproute -n cell-router-system payments-cell-2-route" '{.status.parents[0].conditions[?(@.type=="Accepted")].status}' "True" 240
