@@ -1,7 +1,8 @@
 package metadata
 
-// Merge merges the key/value pairs from src into dst while preserving protected keys.
-// When dst is nil a new map is created. Protected keys are left untouched even if present in src.
+// Merge overlays src onto dst while preserving keys that belong to the
+// operator's ownership contract. This lets users add metadata without being
+// able to remove labels or annotations that reconciliation depends on.
 func Merge(dst map[string]string, src map[string]string, protectedKeys ...string) map[string]string {
 	if len(src) == 0 {
 		if dst == nil {

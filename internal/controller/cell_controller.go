@@ -61,13 +61,18 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return r.reconcileNormal(ctx, &cell, logger)
 }
 
-// reconcileNormal reconciles the managed namespace and entrypoint service for a live Cell.
+// reconcileNormal reconciles the namespace and entrypoint Service and then
+// projects only that controller-owned state back into Cell status.
 func (r *CellReconciler) reconcileNormal(ctx context.Context, cell *cellv1alpha1.Cell, logger logr.Logger) (ctrl.Result, error) {
+	// Patch from a deep copy so status writes do not interfere with metadata or
+	// spec changes that may have happened after this reconcile started.
 	statusBase := cell.DeepCopy()
 	namespaceName := effectiveNamespace(cell)
 
 	if err := r.reconcileNamespace(ctx, cell, namespaceName); err != nil {
 		logger.Error(err, "failed to reconcile namespace", "namespace", namespaceName)
+		// Persist the failure reason best-effort so users can inspect status even
+		// though the reconcile returns an error and will be retried.
 		r.setCellCondition(cell, cellv1alpha1.CellNamespaceReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonError, err.Error())
 		r.setCellCondition(cell, cellv1alpha1.CellReadyCondition, metav1.ConditionFalse, cellv1alpha1.ConditionReasonError, "namespace reconciliation failed")
 		_ = r.patchStatus(ctx, cell, statusBase)
@@ -98,7 +103,8 @@ func (r *CellReconciler) reconcileNormal(ctx context.Context, cell *cellv1alpha1
 	return ctrl.Result{}, nil
 }
 
-// reconcileDeletion removes managed resources before dropping the Cell finalizer.
+// reconcileDeletion removes only resources this controller can prove it owns,
+// which protects shared namespaces and preexisting Services from accidental deletion.
 func (r *CellReconciler) reconcileDeletion(ctx context.Context, cell *cellv1alpha1.Cell, logger logr.Logger) (ctrl.Result, error) {
 	namespaceName := effectiveNamespace(cell)
 
@@ -137,6 +143,8 @@ func (r *CellReconciler) ensureFinalizer(ctx context.Context, cell *cellv1alpha1
 }
 
 // reconcileNamespace creates or updates the namespace managed for the Cell.
+// Labels, rather than owner references, are used to track ownership because
+// namespaces are cluster-scoped.
 func (r *CellReconciler) reconcileNamespace(ctx context.Context, cell *cellv1alpha1.Cell, name string) error {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 
@@ -150,7 +158,8 @@ func (r *CellReconciler) reconcileNamespace(ctx context.Context, cell *cellv1alp
 	return err
 }
 
-// reconcileService creates or updates the Cell entrypoint Service and returns its fully qualified name.
+// reconcileService creates or updates the Cell entrypoint Service and attaches
+// an owner reference so Kubernetes GC can remove it with the Cell.
 func (r *CellReconciler) reconcileService(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) (string, error) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name:      cell.Spec.Entrypoint.ServiceName,
@@ -172,7 +181,9 @@ func (r *CellReconciler) reconcileService(ctx context.Context, cell *cellv1alpha
 	return fmt.Sprintf("%s/%s", namespace, service.Name), nil
 }
 
-// deleteEntrypointService removes the managed entrypoint Service when it is owned by the Cell.
+// deleteEntrypointService removes the Service only when the Cell owns it.
+// That guard allows users to bring their own Service name without the operator
+// deleting something it did not create.
 func (r *CellReconciler) deleteEntrypointService(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) error {
 	if namespace == "" {
 		return nil
@@ -194,7 +205,8 @@ func (r *CellReconciler) deleteEntrypointService(ctx context.Context, cell *cell
 	return client.IgnoreNotFound(r.Delete(ctx, service))
 }
 
-// deleteNamespaceIfManaged removes the namespace only when the operator created it for this Cell.
+// deleteNamespaceIfManaged removes the namespace only when the operator labels
+// indicate it created that namespace specifically for this Cell.
 func (r *CellReconciler) deleteNamespaceIfManaged(ctx context.Context, cell *cellv1alpha1.Cell, namespace string) error {
 	if namespace == "" {
 		return nil
@@ -216,7 +228,8 @@ func (r *CellReconciler) deleteNamespaceIfManaged(ctx context.Context, cell *cel
 	return client.IgnoreNotFound(r.Delete(ctx, ns))
 }
 
-// patchStatus patches only the Cell status subresource against the provided base copy.
+// patchStatus uses a merge patch so condition updates do not wipe unrelated
+// status fields already computed earlier in the reconcile.
 func (r *CellReconciler) patchStatus(ctx context.Context, cell *cellv1alpha1.Cell, base *cellv1alpha1.Cell) error {
 	return r.Status().Patch(ctx, cell, client.MergeFrom(base))
 }
@@ -232,7 +245,8 @@ func (r *CellReconciler) setCellCondition(cell *cellv1alpha1.Cell, condType stri
 	})
 }
 
-// effectiveNamespace returns the namespace that should host the Cell resources.
+// effectiveNamespace centralizes defaulting so reconciliation, status, and
+// finalization all agree on where Cell-owned resources live.
 func effectiveNamespace(cell *cellv1alpha1.Cell) string {
 	if cell.Spec.Namespace != "" {
 		return cell.Spec.Namespace

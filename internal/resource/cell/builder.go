@@ -15,6 +15,8 @@ const portNameTemplate = "port-%d"
 
 // MutateNamespace applies the desired state for the cell namespace into the provided object.
 func MutateNamespace(ns *corev1.Namespace, cell *cellv1alpha1.Cell) {
+	// These labels are part of the operator's ownership contract and are
+	// intentionally protected from user overrides.
 	ns.Labels = metadata.Merge(ns.Labels, map[string]string{
 		constants.ManagedByLabel: constants.OperatorName,
 		constants.CellNameLabel:  cell.Name,
@@ -37,6 +39,8 @@ func MutateService(svc *corev1.Service, cell *cellv1alpha1.Cell) {
 		constants.EntrypointServiceLabel,
 	)
 
+	// Reset selectors on every reconcile so labels removed from spec do not
+	// linger and keep targeting stale workloads.
 	if svc.Spec.Selector == nil {
 		svc.Spec.Selector = map[string]string{}
 	} else {
@@ -50,6 +54,8 @@ func MutateService(svc *corev1.Service, cell *cellv1alpha1.Cell) {
 			svc.Spec.Selector[k] = v
 		}
 	} else {
+		// The default convention keeps the API lightweight: a workload labeled
+		// with the cell name becomes routable without an explicit selector.
 		svc.Spec.Selector[constants.CellNameLabel] = cell.Name
 	}
 
@@ -69,6 +75,8 @@ func MutateService(svc *corev1.Service, cell *cellv1alpha1.Cell) {
 		targetPort = *cell.Spec.Entrypoint.TargetPort
 	}
 
+	// A Cell intentionally exposes a single logical entrypoint. Rebuild the
+	// ports slice instead of mutating it in place to avoid stale ports drifting.
 	svc.Spec.Ports = []corev1.ServicePort{
 		{
 			Name:       fmt.Sprintf(portNameTemplate, cell.Spec.Entrypoint.Port),

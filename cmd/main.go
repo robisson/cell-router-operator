@@ -52,6 +52,8 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(cellv1alpha1.AddToScheme(scheme))
+	// The operator creates stable Gateway resources plus the v1beta1
+	// ReferenceGrant type used for cross-namespace backend references.
 	utilruntime.Must(gatewayv1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -107,7 +109,8 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	// Initial webhook TLS options
+	// Reuse the same TLS hardening for webhooks and metrics so local and
+	// production deployments have one consistent security posture.
 	webhookTLSOpts := tlsOpts
 	webhookServerOptions := webhook.Options{
 		TLSOpts: webhookTLSOpts,
@@ -124,6 +127,8 @@ func main() {
 
 	webhookServer := webhook.NewServer(webhookServerOptions)
 
+	// Metrics are configurable because local development often disables them
+	// while production-like deployments expose them over HTTPS.
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.1/pkg/metrics/server
@@ -135,9 +140,10 @@ func main() {
 	}
 
 	if secureMetrics {
-		// FilterProvider is used to protect the metrics endpoint with authn/authz.
-		// These configurations ensure that only authorized users and service accounts
-		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
+		// Treat metrics as an operator surface, not a public one. When secure
+		// serving is enabled, controller-runtime can enforce Kubernetes authn/authz
+		// using the RBAC bundled with the manager.
+		// More info:
 		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.1/pkg/metrics/filters#WithAuthenticationAndAuthorization
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
@@ -165,7 +171,9 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "32ca8905.cellrouter.io",
+		// Keep a stable election ID so multiple replicas coordinate with each
+		// other without colliding with unrelated controllers in the cluster.
+		LeaderElectionID: "32ca8905.cellrouter.io",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -184,8 +192,10 @@ func main() {
 	}
 
 	if err := (&controller.CellReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		// Separate recorder names make Kubernetes events easier to trace back to
+		// the controller that emitted them.
 		Recorder: mgr.GetEventRecorderFor(constants.OperatorName + "-cell"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cell")

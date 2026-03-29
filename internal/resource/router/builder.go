@@ -59,6 +59,8 @@ func MutateGateway(gw *gatewayv1.Gateway, router *cellv1alpha1.CellRouter) {
 		listeners = append(listeners, listener)
 	}
 
+	// Sort listeners for stable reconciles. Otherwise, semantically identical
+	// specs that only differ in list order would cause needless updates.
 	sort.SliceStable(listeners, func(i, j int) bool {
 		return listeners[i].Name < listeners[j].Name
 	})
@@ -77,6 +79,7 @@ func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1al
 	grant.Spec = gatewayv1beta1.ReferenceGrantSpec{
 		From: []gatewayv1beta1.ReferenceGrantFrom{
 			{
+				// Managed HTTPRoutes are always created in the gateway namespace.
 				Group:     gatewayv1beta1.Group(gatewayv1.GroupName),
 				Kind:      gatewayv1beta1.Kind("HTTPRoute"),
 				Namespace: gatewayv1beta1.Namespace(gatewayNamespace),
@@ -86,7 +89,8 @@ func MutateReferenceGrant(grant *gatewayv1beta1.ReferenceGrant, router *cellv1al
 			{
 				Group: gatewayv1beta1.Group(""),
 				Kind:  gatewayv1beta1.Kind("Service"),
-				Name:  pointerTo(gatewayv1beta1.ObjectName(backend.Name)),
+				// Grant access only to the selected backend Service.
+				Name: pointerTo(gatewayv1beta1.ObjectName(backend.Name)),
 			},
 		},
 	}
@@ -102,6 +106,8 @@ func MutateHTTPRoute(route *gatewayv1.HTTPRoute, router *cellv1alpha1.CellRouter
 
 	parentRefs := make([]gatewayv1.ParentReference, 0, len(spec.ListenerNames))
 	if len(spec.ListenerNames) == 0 {
+		// No listener filter means the route may attach to any compatible
+		// listener on the managed Gateway.
 		parentRefs = append(parentRefs, gatewayv1.ParentReference{
 			Name:      gatewayv1.ObjectName(router.Spec.Gateway.Name),
 			Namespace: pointerTo(gatewayv1.Namespace(gatewayNamespace)),
@@ -186,10 +192,11 @@ func buildMatches(spec cellv1alpha1.CellRouteSpec) []gatewayv1.HTTPRouteMatch {
 		matches = append(matches, match)
 	}
 
+	// An empty matches slice is meaningful in Gateway API: it produces a catch-all rule.
 	return matches
 }
 
-// pointerTo returns a pointer to value.
+// pointerTo keeps Gateway API object construction readable when fields are pointer-based.
 func pointerTo[T any](value T) *T {
 	return &value
 }
